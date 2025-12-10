@@ -1,0 +1,348 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+                {
+            "name": "simstandard clonesim",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "simstandard.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "clonesim"           
+            ]
+        },
+        {
+            "name": "tradsim_fges compute ",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "tradsim_fges_obj.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "compute",
+                //"--sim"
+            ]
+        },
+        {
+            "name": "tradsim_fges plot ",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "tradsim_fges_obj.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "plot",
+                "--sim"
+
+            ]
+        },  
+        {
+            "name": "tradsim_gfci_demo",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "tradsim_gfci_demo.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "sim"           
+            ]
+        },
+                {
+            "name": "sim_demo",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "sim_demo.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "sim"           
+            ]
+        },
+        {
+            "name": "simdata",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "simdata.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "sim"           
+            ]
+        },
+        {
+            "name": "merrillsim_fges compute ",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrillsim_fges_obj.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "compute"
+            ]
+        },
+
+        {
+            "name": "merrillsim_gfci compute sim",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrillsim_gfci_obj.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--sim",
+                "--cmd",
+                "compute"
+            ]
+        },
+
+        {
+            "name": "merrillsim_fges plot sim",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrillsim_fges_obj.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--sim",
+                "--cmd",
+                "plot"
+            ]
+        },
+
+        {
+            "name": "run_tetrad test1",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "run_tetrad.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "test1"            ]
+        },
+        {
+            "name": "run_tetrad test2",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "run_tetrad.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "test2"
+            ]
+        },
+        {
+            "name": "run_tetrad test3",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "run_tetrad.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "test3"
+            ]
+        },        
+        {
+            "name": "run_cda compute ",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "run_cda.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "compute"
+            ]
+        },        
+        {
+            "name": "covid_gfci compute ",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "covid_gfci.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "compute"
+            ]
+        },  
+        {
+            "name": "tradsim_gfci compute ",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "tradsim_gfci_obj.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "compute",
+                "--sim"
+
+            ]
+        },  
+        {
+            "name": "tradsim_gfci plot ",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "tradsim_gfci_obj.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "plot",
+                "--sim"
+
+            ]
+        },    
+        {
+            "name": "simdata_gfci plot",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "simdata_gfci.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "plot"
+            ]
+        },   
+        {
+            "name": "merrill_fges compute ",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrill_fges_obj.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "compute"
+            ]
+        },
+        {
+            "name": "merrill_fges compute_relag ",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrill_fges_obj.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "compute_relag"
+            ]
+        },        
+        {
+            "name": "merrill_fges plot",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrill_fges_obj.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "plot"
+            ]
+        },
+
+        {
+            "name": "merrill_fges test_impute",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrill_fges_obj.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "test_impute"
+            ]
+        },
+        {
+            "name": "merrill_fges impute",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrill_fges_obj.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "impute"
+            ]
+        },
+        {
+            "name": "merrill_fges impute_relag",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrill_fges_obj.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "impute_relag"
+            ]
+        },
+        {
+            "name": "merrill_fges plotimpute",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "merrill_fges_obj.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--verbose",
+                "3",
+                "--cmd",
+                "plotimpute"
+            ]
+        }
+    ]
+}
