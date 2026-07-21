@@ -1,0 +1,21 @@
+# config file for simdata project
+
+general:
+  version: 1.0.0
+
+
+simulation:
+  num_samples: 
+    - 10000
+  effect_sizes:
+    - .1
+    - .2
+    - .3
+    # - .4
+  num_variables: 22
+  num_edges: 27
+  seed: 43
+  data_directory: ./sim_data_v2
+  iterations: 10
+
+
