@@ -1,5 +1,9 @@
 # project notes for hinf8220 project
 
+**Current runner:** `tradsim_fastcausal.py` (fastcausal, no Java). See
+`README.md`. The FGES commands below (`tradsim_fges_obj.py`) are the legacy
+path.
+
 Simulated data with simdata.py
 
 22 nodes 27 edges
