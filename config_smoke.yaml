@@ -27,3 +27,16 @@ discovery:
   output_directory: ./discovery_results/smoke_grid
   run_sem: false
   seed: 2025
+  # Tiny SA3 grid (do not combine with a full proportion list).
+  missingness:
+    enabled: true
+    mechanisms:
+      - mcar
+      - mar
+    rates:
+      - 0.2
+    strategies:
+      - complete_case
+      - mean
+    mar_covariates: null
+    mar_slope: 1.5
