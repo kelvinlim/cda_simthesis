@@ -18,4 +18,22 @@ simulation:
   data_directory: ./sim_data_v2
   iterations: 10
 
+# fastcausal discovery (tradsim_fastcausal.py). CLI flags override these.
+discovery:
+  algorithm: fges          # fges | gfci | both
+  alpha: 0.01              # GFCI Fisher-Z (legacy tradsim default)
+  penalty_discount: 1.0    # SEM-BIC penalty (legacy tradsim default)
+  proportions:
+    - 1.0
+    - 0.9
+    - 0.8
+    - 0.7
+    - 0.6
+    - 0.5
+    - 0.4
+  iterations: 100
+  output_directory: ./discovery_results
+  run_sem: true
+  seed: 2025
+
 
