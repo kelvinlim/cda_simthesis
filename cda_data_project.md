@@ -1,5 +1,9 @@
 # cda_data_project
 
+**Current workflow (no Java):** see `README.md` — `simdata.py` then
+`tradsim_fastcausal.py`. Notes below are historical (JPype / Tetrad jar /
+fastcda).
+
 Code for the expanded capstone project with data simulation.
 
 ## data simulation

@@ -1,3 +1,6 @@
+## DEPRECATED: Java Tetrad search wrapper (requires JPype + resources/tetrad-current.jar).
+## New discovery code should use tools/fastcausal_backend.py (fastcausal / tetrad-port).
+##
 ## Provides a simple wrapper for many of the Tetrad searches that can be used
 ## either from Python or from R. The inputs are all pandas data frames
 ## and the outputs are endpoint-matrix-formatted graphs, also data frames. (In a

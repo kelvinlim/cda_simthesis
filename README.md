@@ -1,215 +1,158 @@
 # cda_simthesis
 
-This project contains code for thesis on simulation of ema data
+Thesis EMA simulation + causal discovery: how **subsample size / missingness**
+affects **FGES** and **GFCI** recovery versus **simulated ground-truth** graphs.
 
-The purpose of this project is to examine the effect of missing data on FGES output, in particular how the the number and types of edges are affected by the strength of the edges as a function of how much data is lost.
+The intended loop is:
 
-Simulated data will be used so that the effect of the strength of edges can be examined.
+1. Generate SEM data and a known DAG (`simdata.py` + `picause.py`).
+2. Run discovery on those CSVs (`tradsim_fastcausal.py`).
+3. Compare recovered edges to the picause `.txt` ground truth (Dice, oriented
+   counts) across subsample fractions ~100% → 40%.
 
-For simplicity, we will start with 100 samples and then sample from 100% to 40%.
+Discovery uses [fastcausal](https://github.com/kelvinlim/fastcausal) and
+[tetrad-port](https://github.com/kelvinlim/tetrad-port) (C++ Tetrad, **no
+Java**). `fastcda` and `resources/tetrad-current.jar` are not required.
 
- Simuated data will be created using my fork of CausalPowerAnalysis
-https://github.com/lelandwilliams/CausalPowerAnalysis.  My fork is here:
-https://github.com/kelvinlim/CausalPowerAnalysis.  It corrects a warning message  when working with a dataframe.
+## Recommended path
 
-## Generate simulated data
+Python 3.11+ recommended.
 
-To generate simulated data with range of effectsizes and num_samples.   This is configured in the config.yaml folder.
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 
-```
-./simdata.py
-```
+# 1. generate CSVs + companion .txt DAGs (config.yaml → simulation)
+python simdata.py --cmd sim
 
-### Output
+# 2. FGES (default) on those CSVs, subsample 100% → 40%
+python tradsim_fastcausal.py --cmd compute
 
-```
-kolim@XJ75J7FXQK cda_hinf8220 %  cd /Users/kolim/Projects/cda_hinf8220 ; /usr/bin/env /Users/kolim/Projects/cda_hinf8220/.venv/bin/python /Use
-rs/kolim/.vscode/extensions/ms-python.debugpy-2025.16.0-darwin-arm64/bundled/libs/debugpy/adapter/../../debugpy/launcher 50843 -- simdata.py -
--verbose 3 --cmd sim 
-rows-100_vars-14_edges-12_es-0.1_iter-000.csv count: 1
-rows-100_vars-14_edges-12_es-0.1_iter-001.csv count: 1
-rows-100_vars-14_edges-12_es-0.1_iter-002.csv count: 1
-rows-100_vars-14_edges-12_es-0.2_iter-000.csv count: 1
-rows-100_vars-14_edges-12_es-0.2_iter-001.csv count: 1
-rows-100_vars-14_edges-12_es-0.2_iter-002.csv count: 1
-rows-100_vars-14_edges-12_es-0.5_iter-000.csv count: 1138
-rows-100_vars-14_edges-12_es-0.5_iter-001.csv count: 5050
-rows-100_vars-14_edges-12_es-0.5_iter-002.csv count: 1979
-rows-100_vars-14_edges-12_es-0.8_iter-000.csv count: 3152
-rows-100_vars-14_edges-12_es-0.8_iter-001.csv count: 1767
-kolim@XJ75J7FXQK cda_hinf8220 %  cd /Users/kolim/Projects/cda_hinf8220 ; /usr/bin/env /Users/kolim/Projects/cda_hinf8220/.venv/bin/python /Users/kolim/.vsc
-ode/extensions/ms-python.debugpy-2025.16.0-darwin-arm64/bundled/libs/debugpy/adapter/../../debugpy/launcher 51015 -- simdata.py --verbose 3 --cmd sim 
-rows-100_vars-14_edges-12_es-0.1_iter-000.csv count: 1
-rows-100_vars-14_edges-12_es-0.1_iter-001.csv count: 1
-rows-100_vars-14_edges-12_es-0.1_iter-002.csv count: 1
-rows-100_vars-14_edges-12_es-0.1_iter-003.csv count: 1
-rows-100_vars-14_edges-12_es-0.2_iter-000.csv count: 1
-rows-100_vars-14_edges-12_es-0.2_iter-001.csv count: 2
-rows-100_vars-14_edges-12_es-0.2_iter-002.csv count: 1
-rows-100_vars-14_edges-12_es-0.2_iter-003.csv count: 1
-rows-100_vars-14_edges-12_es-0.5_iter-000.csv count: 3674
-rows-100_vars-14_edges-12_es-0.5_iter-001.csv count: 11828
-rows-100_vars-14_edges-12_es-0.5_iter-002.csv count: 8980
-rows-100_vars-14_edges-12_es-0.5_iter-003.csv count: 6673
-rows-100_vars-14_edges-12_es-0.8_iter-000.csv count: 31998
-rows-100_vars-14_edges-12_es-0.8_iter-001.csv count: 29030
-rows-100_vars-14_edges-12_es-0.8_iter-002.csv count: 2895
-rows-100_vars-14_edges-12_es-0.8_iter-003.csv count: 12056
-rows-100_vars-14_edges-12_es-1.0_iter-000.csv count: 16854
-rows-100_vars-14_edges-12_es-1.0_iter-001.csv count: 13019
-rows-100_vars-14_edges-12_es-1.0_iter-002.csv count: 14312
-rows-100_vars-14_edges-12_es-1.0_iter-003.csv count: 9638
-rows-500_vars-14_edges-12_es-0.1_iter-000.csv count: 1
-rows-500_vars-14_edges-12_es-0.1_iter-001.csv count: 1
-rows-500_vars-14_edges-12_es-0.1_iter-002.csv count: 1
-rows-500_vars-14_edges-12_es-0.1_iter-003.csv count: 1
-rows-500_vars-14_edges-12_es-0.2_iter-000.csv count: 1
-rows-500_vars-14_edges-12_es-0.2_iter-001.csv count: 1
-rows-500_vars-14_edges-12_es-0.2_iter-002.csv count: 1
-rows-500_vars-14_edges-12_es-0.2_iter-003.csv count: 1
-rows-500_vars-14_edges-12_es-0.5_iter-000.csv count: 1354
-rows-500_vars-14_edges-12_es-0.5_iter-001.csv count: 12706
-rows-500_vars-14_edges-12_es-0.5_iter-002.csv count: 13830
-rows-500_vars-14_edges-12_es-0.5_iter-003.csv count: 11960
-rows-500_vars-14_edges-12_es-0.8_iter-000.csv count: 15438
-rows-500_vars-14_edges-12_es-0.8_iter-001.csv count: 69743
-rows-500_vars-14_edges-12_es-0.8_iter-002.csv count: 32190
-rows-500_vars-14_edges-12_es-0.8_iter-003.csv count: 30758
-rows-500_vars-14_edges-12_es-1.0_iter-000.csv count: 9976
-rows-500_vars-14_edges-12_es-1.0_iter-001.csv count: 11230
-rows-500_vars-14_edges-12_es-1.0_iter-002.csv count: 15511
-rows-500_vars-14_edges-12_es-1.0_iter-003.csv count: 1338
-rows-1000_vars-14_edges-12_es-0.1_iter-000.csv count: 1
-rows-1000_vars-14_edges-12_es-0.1_iter-001.csv count: 1
-rows-1000_vars-14_edges-12_es-0.1_iter-002.csv count: 1
-rows-1000_vars-14_edges-12_es-0.1_iter-003.csv count: 1
-rows-1000_vars-14_edges-12_es-0.2_iter-000.csv count: 2
-rows-1000_vars-14_edges-12_es-0.2_iter-001.csv count: 2
-rows-1000_vars-14_edges-12_es-0.2_iter-002.csv count: 1
-rows-1000_vars-14_edges-12_es-0.2_iter-003.csv count: 1
-rows-1000_vars-14_edges-12_es-0.5_iter-000.csv count: 30174
-rows-1000_vars-14_edges-12_es-0.5_iter-001.csv count: 5705
-rows-1000_vars-14_edges-12_es-0.5_iter-002.csv count: 1234
-rows-1000_vars-14_edges-12_es-0.5_iter-003.csv count: 6959
-rows-1000_vars-14_edges-12_es-0.8_iter-000.csv count: 6137
-rows-1000_vars-14_edges-12_es-0.8_iter-001.csv count: 22440
-rows-1000_vars-14_edges-12_es-0.8_iter-002.csv count: 8755
-rows-1000_vars-14_edges-12_es-0.8_iter-003.csv count: 62762
-rows-1000_vars-14_edges-12_es-1.0_iter-000.csv count: 30643
-rows-1000_vars-14_edges-12_es-1.0_iter-001.csv count: 793
-rows-1000_vars-14_edges-12_es-1.0_iter-002.csv count: 9015
-rows-1000_vars-14_edges-12_es-1.0_iter-003.csv count: 18074
+# 3. boxplots of Dice / optional SEM |estimate|
+python tradsim_fastcausal.py --cmd plot
 ```
 
-## Selecting cases
+GFCI, or both algorithms:
 
-Turns out not all datasets create graphs with edges with GFCI
-
-To identify the models that worked, I created a program
-try_all_files.ipynb. This program read in all data files
-with rows-100 to identify which files worked. Here is the output:
-
-```
-An error occurred during model fitting: not enough values to unpack (expected 2, got 0)** On entry to DPOTRI, parameter number  4 had an illegal value
-
-This might be due to an unusable model, such as one with no direct edges.
-Model search succeeded for file: sim_data/rows-100_vars-14_edges-12_es-0.2_iter-000.csv
-Model search succeeded for file: sim_data/rows-100_vars-14_edges-12_es-0.2_iter-002.csv
-An error occurred during model fitting: not enough values to unpack (expected 2, got 0)
-This might be due to an unusable model, such as one with no direct edges.
-** On entry to DPOTRI, parameter number  4 had an illegal value
-An error occurred during model fitting: not enough values to unpack (expected 2, got 0)
-This might be due to an unusable model, such as one with no direct edges.
-** On entry to DPOTRI, parameter number  4 had an illegal value
-Model search succeeded for file: sim_data/rows-100_vars-14_edges-12_es-0.2_iter-003.csv
-Model search succeeded for file: sim_data/rows-100_vars-14_edges-12_es-1.0_iter-003.csv
-Model search succeeded for file: sim_data/rows-100_vars-14_edges-12_es-0.1_iter-000.csv
-Model search succeeded for file: sim_data/rows-100_vars-14_edges-12_es-0.1_iter-001.csv
-An error occurred during model fitting: not enough values to unpack (expected 2, got 0)
-This might be due to an unusable model, such as one with no direct edges.
-** On entry to DPOTRI, parameter number  4 had an illegal value
-An error occurred during model fitting: not enough values to unpack (expected 2, got 0)
-This might be due to an unusable model, such as one with no direct edges.
-** On entry to DPOTRI, parameter number  4 had an illegal value
-Model search succeeded for file: sim_data/rows-100_vars-14_edges-12_es-0.1_iter-003.csv
-Model search succeeded for file: sim_data/rows-100_vars-14_edges-12_es-0.1_iter-002.csv
-Model search succeeded for file: sim_data/rows-100_vars-14_edges-12_es-1.0_iter-001.csv
+```bash
+python tradsim_fastcausal.py --cmd compute --algorithm gfci
+python tradsim_fastcausal.py --cmd compute --algorithm both
 ```
 
-I selected the following four cases - note that txt files are the model files generated
-by the CausalPowerAnalysis code.
+Sanity check after install:
 
-```
-            "sim_data/rows-100_vars-14_edges-12_es-0.1_iter-000.txt",
-            "sim_data/rows-100_vars-14_edges-12_es-0.1_iter-001.txt",
-            "sim_data/rows-100_vars-14_edges-12_es-0.1_iter-003.txt",
-            "sim_data/rows-100_vars-14_edges-12_es-0.1_iter-002.txt",
-
+```bash
+python -c "import fastcausal; print(fastcausal.__version__)"
 ```
 
-These are used for input into simstandard.py that creates data files with different
-beta and rows
+### Smoke / dry-run (no full sim grid)
 
-Next we use tradsim_gfci.ipynb to identify for rows=100, what is the range
-of betas that worked across the four cases.  The range that worked
-across all cases was 0.7-2.0
-
-Problem with tradsim_gfci_obj.py. - gettng errors about
-
-Warning: GFci missing setMaxPathLength; skipping
-
-Warning: GFci missing setPossibleMsepSearchDone; skipping
-
-This was due to another version of tetrad being involved
-
-Fixed with #from run_tetrad import TetradWrap
-
-This was due to the old pytetrad code being included and using a different jar file. Removed pytetrad code and problem was solved.
-
-After simulating data, do the computation and plots
-
+```bash
+python tradsim_fastcausal.py --cmd smoke
 ```
 
-# computations using simulated data
-./tradsim_gfci_obj.py --sim --cmd compute
-# create plots
-./tradsim_gfci_obj.py --sim --cmd plot
+or a 1-file simdata grid:
 
-```
-## clone graphs from actual data
-
-Due to problems with causalPower simulated graphs not 
-being easy to identify causal graphs (few colliders!), try
-a different approach.
-
-Created directed graphs from the original 4 real data sets.
-Essentially we are cloning the graphs from these 4 datasets.
-
-We use fges for generating the graphs from the real data sets.
-
-Output is in json file for each case.
-
-This format is compatible with tradsim_gfci_obj.py
-
-However will rewrite this to use fges instead
-
-tradsim_fges_obj.py
-
-
-```
-# invoked
-./simstandard.py --cmd clonesim
+```bash
+python simdata.py --config config_smoke.yaml --cmd sim
+python tradsim_fastcausal.py --config config_smoke.yaml --cmd compute
+python tradsim_fastcausal.py --config config_smoke.yaml --cmd plot
+pytest tests/ -q
 ```
 
-## causalpower part 2
+## Simulation (`simdata.py`)
 
-Spoke with Erich K on 20251201.
+`simdata.py` uses `picause.py` (CausalPowerAnalysis fork). Parameters live in
+`config.yaml` under `simulation` (`num_samples`, `effect_sizes`,
+`num_variables`, `num_edges`, `iterations`, `data_directory`, `seed`).
 
-Lag modeling is more complicated.
+Each case writes a CSV plus a companion `.txt` SEM dump (ground-truth DAG) into
+`simulation.data_directory` (default `./sim_data_v2`). Discovery expects that
+pairing.
 
-Examined datasets from cpc pain study. Found
-multiple cases with 90 surveys.  
-Found case R13 which has 22 nodes and 27 directed edges
-based on gfci analysis.
+## Discovery (`tradsim_fastcausal.py`)
 
-Trying simulation 
+Config keys are under `discovery:` in `config.yaml`. CLI flags override them.
+
+| CLI | Config key | Role |
+|-----|------------|------|
+| `--algorithm` | `algorithm` | `fges` (default), `gfci`, or `both` |
+| `--iterations` | `iterations` | subsample repeats (default **20**) |
+| `--proportions` | `proportions` | e.g. `1.0,0.9,...,0.4` |
+| `--penalty-discount` | `penalty_discount` | SEM-BIC penalty (default `1.0`) |
+| `--alpha` | `alpha` | GFCI Fisher-Z (default `0.01`) |
+| `--run-sem` / `--no-sem` | `run_sem` | SEM fitting (default **off**) |
+| `--data-dir` | `simulation.data_directory` | input CSVs |
+| `--output-dir` | `output_directory` | results (default `./discovery_results`) |
+| `--seed` | `seed` | RNG seed (default `2025`) |
+| `--glob` | — | CSV glob (default `*.csv`) |
+| `--knowledge` | — | lag/current temporal tiers from column names |
+| `--config` | — | YAML path (default `config.yaml`) |
+
+Implementation (not extra CLIs):
+
+- `tools/fastcausal_backend.py` — FGES/GFCI via `FastCausal.run_search`
+- `tools/graph_metrics.py` — parse picause `.txt` edges; Dice / oriented counts
+
+### Metrics
+
+Written to `discovery_results/resampled_models_fastcausal.csv` (and plots from
+`--cmd plot`):
+
+- **`dice_skeleton` / `diceCoeff`** — undirected edge Dice vs picause truth
+- **`dice_directed`** — oriented Dice vs truth (`-->` / `o->`)
+- **`oriented_tp` / `oriented_fp` / `oriented_fn`** — directed recovery counts
+- **`dice_vs_full`** — legacy Dice vs the **100% recovered** graph (not truth)
+- **`ESMean` / `ESStd`** — mean/std of |SEM estimates| (only if SEM is on)
+- **`search_ok`** — whether that draw’s search finished
+
+`--cmd plot` writes `dice_skeleton_by_proportion.png`,
+`dice_directed_by_proportion.png`, `dice_vs_full_by_proportion.png`, and
+`esmean_by_proportion.png` when SEM columns are present.
+
+### Cost defaults
+
+Meant to be runnable, not a 100-iteration profile:
+
+- `discovery.iterations` is **20**. Set to **100** in config or
+  `--iterations 100` for a “full” profile.
+- Proportion **1.0 runs once** (baseline for `dice_vs_full`). Repeats apply
+  only to proportions `< 1.0`.
+- **SEM is off** (`run_sem: false`). Enable with `--run-sem` or
+  `run_sem: true`.
+
+GFCI (and occasionally FGES) can fail on a draw (`search_ok=False`, e.g.
+nonpositive precision diagonal). Treat that as a **success rate by cell**:
+group the CSV by algorithm × proportion × effect size and take the mean of
+`search_ok`. `--cmd compute` prints this table.
+
+## Off the critical path (legacy Java / fastcda)
+
+These are **not** required for the workflow above:
+
+- `tradsim_fges_obj.py` — previous FGES runner (JPype + Tetrad jar, leftover
+  fastcda GFCI). It calls fastcausal when installed; prefer
+  `tradsim_fastcausal.py`.
+- `tools/TetradSearch.py`, `tools/simulate.py`, `tools/WrappedClKci.py`
+- `resources/tetrad-current.jar` (see `resources/README.md`)
+
+Do not add `fastcda` or JPype unless you are maintaining that fallback.
+`requirements.txt` pins `fastcausal==0.1.11` and leaves those Java deps
+commented out.
+
+## Not in this tree yet (TODO)
+
+- **SA3** — missingness + imputation **against simulated ground truth**. The
+  old `tradsim_fges_obj.py --cmd impute` hook is real-data only.
+- **SA4** — hyperparameter / target-FPR grids. `--penalty-discount` and
+  `--alpha` exist; there is no target-FPR driver.
+
+## Historical notes
+
+Simulated data originally came from a fork of CausalPowerAnalysis:
+https://github.com/kelvinlim/CausalPowerAnalysis (`picause.py` in this repo).
+
+Older lab notes (`ProjectNotes.md`, `cda_data_project.md`) describe Java Tetrad,
+`tradsim_fges_obj.py`, and case-selection notebooks (`try_all_files.ipynb`,
+`simstandard.py`) that are not required for the current runner.

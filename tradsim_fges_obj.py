@@ -1,12 +1,17 @@
 #! /usr/bin/env python3
 
 # tradsim_fges_obj.py
+#
+# DEPRECATED Java Tetrad / fastcda discovery runner.
+# Prefer ``tradsim_fastcausal.py``, which uses fastcausal + tetrad-port
+# (no JVM) and compares recovered graphs to simdata ground-truth ``.txt``
+# files. This file is kept so existing compute/plot/impute workflows can
+# still run; FGES/GFCI now call fastcausal when it is installed.
+#
 # from fastcda import FastCDA
 # from dgraph_flex import DgraphFlex
-
-
-import jpype.imports
-from run_tetrad import TetradWrap
+# import jpype.imports
+# from run_tetrad import TetradWrap
 
 import semopy
 import os
@@ -36,12 +41,12 @@ import miceforest as mf
 
 NUM_ITERATIONS = 100
 
-__version_info__ = ('0', '1', '0')
+__version_info__ = ('0', '2', '0')
 __version__ = '.'.join(__version_info__)
 
 version_history = \
 """
-
+0.2.0 - FGES/GFCI via fastcausal (Java Tetrad optional fallback); see tradsim_fastcausal.py
 0.1.0 - initial version  using fastcda gfci
 """
 
@@ -54,11 +59,26 @@ class TradSimFGES:
         self.config = {}
         for key, value in kwargs.items():
             self.config[key] = value
-        
-        self.tetrad_wrap = TetradWrap()
-        self.tetrad_wrap.jvm_initialize()
-    
-        pass
+
+        self.tetrad_wrap = None
+        self._fc_run = None
+        try:
+            from tools.fastcausal_backend import run_search as fc_run
+            self._fc_run = fc_run
+        except Exception:
+            self._fc_run = None
+
+        if self._fc_run is None:
+            try:
+                from run_tetrad import TetradWrap
+                self.tetrad_wrap = TetradWrap()
+                self.tetrad_wrap.jvm_initialize()
+            except Exception as exc:
+                raise RuntimeError(
+                    "Neither fastcausal nor Java TetradWrap is available. "
+                    "Install fastcausal (pip install fastcausal==0.1.11) and "
+                    "use tradsim_fastcausal.py for the simulation workflow."
+                ) from exc
     
     def dice_coefficient(self, set_a, set_b):
         # Calculate the intersection of the two sets
@@ -85,7 +105,30 @@ class TradSimFGES:
             df (_type_): _description_
             verbose (int, optional): _description_. Defaults to 1.
         """
-        
+        if self._fc_run is not None:
+            from tools.graph_metrics import node_set, skeleton_pairs
+
+            fc_result = self._fc_run(
+                df,
+                algorithm="gfci",
+                alpha=0.01,
+                penalty_discount=1.0,
+                knowledge=bool(knowledge) if knowledge is not None else False,
+                run_sem=False,
+                verbose=verbose,
+            )
+            edges = fc_result.get("edges", []) or []
+            setEdges = set(edges)
+            setNodes = node_set(edges)
+            setPairs = {"".join(pair) for pair in skeleton_pairs(edges)}
+            combined = {
+                "edges": edges,
+                "setEdges": setEdges,
+                "setNodes": setNodes,
+                "setPairs": setPairs,
+            }
+            return combined, fc_result.get("raw", fc_result)
+
         result, dg = self.fc.run_model_search(df,
                              model='gfci',
                              score={'sem_bic': {'penalty_discount': 1.0}},
@@ -131,7 +174,19 @@ class TradSimFGES:
             df - dataframe
             knowledge - bool, True to add knowledge
         """
-        
+        if self._fc_run is not None:
+            from tools.graph_metrics import format_tetrad_graph_text
+
+            fc_result = self._fc_run(
+                df,
+                algorithm="fges",
+                penalty_discount=1.0,
+                knowledge=bool(knowledge),
+                run_sem=False,
+                verbose=verbose,
+            )
+            return format_tetrad_graph_text(fc_result.get("edges", []))
+
         # create the search object 
         self.search = self.tetrad_wrap.search_init(df)
         
@@ -1534,7 +1589,12 @@ class TradSimFGES:
 
     def impute(self, iterations=NUM_ITERATIONS,relag=False):
         """
-        Impute the data 
+        Impute the data
+
+        TODO (SA3): this still uses the Java TetradWrap SEM helpers and
+        real-data CSVs under ``data/``. The fastcausal path in
+        ``tradsim_fastcausal.py`` does not yet wrap missingness+imputation
+        against simulated ground truth. Keep this method as a hook only. 
 
         Args:
             iterations (_type_, optional): _description_. Defaults to NUM_ITERATIONS.
@@ -1599,9 +1659,15 @@ if __name__ == "__main__":
     
     # provide a description of the program with format control
     description = textwrap.dedent('''\
-    A description of the program goes here.
-    
+    DEPRECATED Java/fastcda FGES runner.
 
+    Preferred simulation workflow (no Java)::
+
+        python tradsim_fastcausal.py --cmd compute
+        python tradsim_fastcausal.py --cmd plot
+
+    This script still supports --cmd compute / plot / impute. Discovery now
+    uses fastcausal when installed; Java TetradWrap is only a fallback.
     ''')
     
     parser = argparse.ArgumentParser(

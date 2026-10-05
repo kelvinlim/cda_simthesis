@@ -2,7 +2,13 @@
 .venv_python3.12/
 __pycache__/
 *.pyc
-tools/__pycache__/*.pyc
+tools/__pycache__/
+.pytest_cache/
+.coverage
 
 sim_data_v2
+sim_data/
+sim_data_smoke/
+discovery_results/
+Figures/
 
