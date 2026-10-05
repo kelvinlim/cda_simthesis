@@ -64,10 +64,18 @@ Hyperparameters default to the old runner (`penalty_discount=1.0`, GFCI
 
 ### Dry-run / smoke test
 
-Does not need a full sim grid:
+Does not need a full sim grid. Either:
 
 ```bash
 python tradsim_fastcausal.py --cmd smoke
+```
+
+or a 1-file simdata grid:
+
+```bash
+python simdata.py --config config_smoke.yaml --cmd sim
+python tradsim_fastcausal.py --config config_smoke.yaml --cmd compute
+python tradsim_fastcausal.py --config config_smoke.yaml --cmd plot
 pytest tests/ -q
 ```
 

@@ -12,12 +12,11 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 EDGE_OPS = ("-->", "<--", "o->", "<-o", "o-o", "---", "<->")
-EDGE_LINE_RE = re.compile(
-    r"^\s*(\S+)\s+(-->|<--|o->|<-o|o-o|---|<->)\s+(\S+)\s*$"
+# picause human_readable dumps pack up to five ``src --> dest`` tokens per line
+EDGE_FIND_RE = re.compile(
+    r"(\S+)\s+(-->|<--|o->|<-o|o-o|---|<->)\s+(\S+)"
 )
-NUMBERED_EDGE_RE = re.compile(
-    r"^\s*\d+\.\s+(\S+)\s+(-->|<--|o->|<-o|o-o|---|<->)\s+(\S+)\s*$"
-)
+NUMBERED_PREFIX_RE = re.compile(r"^\s*\d+\.\s+")
 
 DIRECTED_OPS = {"-->", "o->"}
 REVERSE_OPS = {"<--", "<-o"}
@@ -92,8 +91,18 @@ def parse_picause_graph(path: str | Path) -> list[str]:
     return parse_graph_text(text)
 
 
+def edges_from_line(line: str) -> list[str]:
+    """Extract one or more ``src OP dest`` tokens from a line."""
+    cleaned = NUMBERED_PREFIX_RE.sub("", line)
+    return [f"{src} {op} {dest}" for src, op, dest in EDGE_FIND_RE.findall(cleaned)]
+
+
 def parse_graph_text(text: str) -> list[str]:
-    """Parse edges from picause SEM text or Tetrad ``Graph Edges:`` output."""
+    """Parse edges from picause SEM text or Tetrad ``Graph Edges:`` output.
+
+    picause ``pairlist2arrowstr(..., human_readable=True)`` packs up to five
+    edges on a line, separated by tabs.
+    """
     edges: list[str] = []
     in_picause_edges = False
     in_tetrad_edges = False
@@ -116,26 +125,15 @@ def parse_graph_text(text: str) -> list[str]:
             or stripped.startswith("Iterations:")
         ):
             break
-        if in_tetrad_edges and (
-            stripped.startswith("Graph Attributes:")
-            or stripped.startswith("Graph Nodes:")
-            or stripped == ""
-        ):
-            if stripped == "" and edges:
-                # blank line after edges is common in Tetrad output
-                continue
-            if stripped.startswith("Graph "):
-                break
+        if in_tetrad_edges and stripped.startswith("Graph Attributes:"):
+            break
+        if in_tetrad_edges and stripped.startswith("Graph Nodes:") and edges:
+            break
 
-        numbered = NUMBERED_EDGE_RE.match(line)
-        if numbered:
-            edges.append(f"{numbered.group(1)} {numbered.group(2)} {numbered.group(3)}")
-            continue
-
-        if in_picause_edges or in_tetrad_edges or EDGE_LINE_RE.match(line):
-            match = EDGE_LINE_RE.match(line)
-            if match:
-                edges.append(f"{match.group(1)} {match.group(2)} {match.group(3)}")
+        if in_picause_edges or in_tetrad_edges:
+            edges.extend(edges_from_line(line))
+        elif EDGE_FIND_RE.search(line):
+            edges.extend(edges_from_line(line))
 
     return edges
 

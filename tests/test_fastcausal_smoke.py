@@ -23,4 +23,6 @@ def test_smoke_fges(tmp_path):
     assert not summary.empty
     assert set(summary["proportion"]) <= {1.0, 0.8}
     assert (summary["algorithm"] == "fges").all()
+    assert (summary["n_true_edges"] > 0).all()
+    assert summary["es"].iloc[0] == 0.25
     assert summary["dice_skeleton"].between(0.0, 1.0).all()

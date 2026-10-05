@@ -22,16 +22,15 @@ import pandas as pd
 import yaml
 
 from tools.fastcausal_backend import run_search
-from tools.graph_metrics import compare_graphs, parse_picause_graph
+from tools.graph_metrics import compare_graphs, parse_picause_graph, skeleton_pairs
 
 __version_info__ = ("0", "2", "0")
 __version__ = ".".join(__version_info__)
 
 DEFAULT_PROPORTIONS = [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
-CSV_NAME_RE = re.compile(
-    r"(?:sub-(?P<sub>\d+)|iter-(?P<iter>\d+)).*?es-(?P<es>[0-9.]+)",
-    re.IGNORECASE,
-)
+SUB_RE = re.compile(r"(?:^|_)sub-(?P<sub>\d+)", re.IGNORECASE)
+ITER_RE = re.compile(r"(?:^|_)iter-(?P<iter>\d+)", re.IGNORECASE)
+ES_RE = re.compile(r"(?:^|_)es-(?P<es>[0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 
 
 def load_yaml_config(path: str | Path) -> dict:
@@ -41,12 +40,15 @@ def load_yaml_config(path: str | Path) -> dict:
 
 def parse_case_meta(csv_path: Path) -> dict:
     stem = csv_path.stem
-    match = CSV_NAME_RE.search(stem)
+    sub_match = SUB_RE.search(stem)
+    iter_match = ITER_RE.search(stem)
+    es_match = ES_RE.search(stem)
     sub = None
-    es = None
-    if match:
-        sub = match.group("sub") or match.group("iter")
-        es = match.group("es")
+    if sub_match:
+        sub = sub_match.group("sub")
+    elif iter_match:
+        sub = iter_match.group("iter")
+    es = es_match.group("es") if es_match else None
     return {
         "case": stem,
         "subject": f"sub-{int(sub):03d}" if sub is not None else stem,
@@ -214,6 +216,16 @@ class TradSimFastcausal:
                         f"  {meta['case']} {algorithm} p={proportion} "
                         f"iter={iteration + 1}/{n_iter}"
                     )
+                base = {
+                    "case": meta["case"],
+                    "subject": meta["subject"],
+                    "es": meta["es"],
+                    "algorithm": algorithm,
+                    "proportion": proportion,
+                    "iteration": iteration,
+                    "n_rows": len(resampled),
+                    "n_true_edges": len(skeleton_pairs(true_edges)),
+                }
                 try:
                     result = run_search(
                         resampled,
@@ -229,10 +241,11 @@ class TradSimFastcausal:
                         f"Warning: {algorithm} failed at p={proportion} "
                         f"iter={iteration}: {exc}"
                     )
+                    rows.append({**base, "search_ok": False, "error": str(exc)})
                     continue
 
                 recovered = result["edges"]
-                if proportion == 1.0 and iteration == 0:
+                if proportion == 1.0 and full_edges is None:
                     full_edges = list(recovered)
 
                 metrics = compare_graphs(
@@ -243,14 +256,9 @@ class TradSimFastcausal:
                 es_mean, es_std = mean_abs_estimates(result.get("sem_summary"))
                 rows.append(
                     {
-                        "case": meta["case"],
-                        "subject": meta["subject"],
-                        "es": meta["es"],
-                        "algorithm": algorithm,
-                        "proportion": proportion,
-                        "iteration": iteration,
-                        "n_rows": len(resampled),
-                        "n_true_edges": metrics["n_true_edges"],
+                        **base,
+                        "search_ok": True,
+                        "error": None,
                         "n_recovered_edges": metrics["n_recovered_edges"],
                         "n_recovered_directed": metrics["n_recovered_directed"],
                         "diceCoeff": metrics["dice_skeleton"],
@@ -280,22 +288,24 @@ class TradSimFastcausal:
                 )
             summary = pd.read_csv(csv_path)
 
+        plt.ioff()
+        if "search_ok" in summary.columns:
+            summary = summary[summary["search_ok"] != False]
         if summary.empty:
             raise ValueError("Summary dataframe is empty; nothing to plot.")
-
-        plt.ioff()
         hue = "case" if summary["case"].nunique() > 1 else None
         extra_hue = "algorithm" if summary["algorithm"].nunique() > 1 else hue
 
         def _box(y, filename, title):
             plt.figure(figsize=(10, 6))
-            sns.boxplot(
-                x="proportion",
-                y=y,
-                hue=extra_hue or hue,
-                data=summary,
-                palette="bright",
-            )
+            plot_hue = extra_hue or hue
+            kwargs = {"x": "proportion", "y": y, "data": summary}
+            if plot_hue is not None:
+                kwargs["hue"] = plot_hue
+                kwargs["palette"] = "bright"
+            else:
+                kwargs["color"] = "steelblue"
+            sns.boxplot(**kwargs)
             plt.title(title)
             plt.tight_layout()
             path = out_dir / filename
@@ -350,7 +360,7 @@ class TradSimFastcausal:
         if self.config.get("run_sem") is None:
             self.config["run_sem"] = False
         self.config["output_dir"] = str(out_dir)
-        self.config["glob"] = "*.csv"
+        self.config["glob"] = "sub-*.csv"
 
         summary = self.compute()
         if summary.empty:

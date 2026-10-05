@@ -52,6 +52,31 @@ def test_parse_picause_file(tmp_path: Path):
     assert parse_picause_graph(path) == ["x_1 --> x_2", "x_1 --> x_3", "x_2 --> x_4"]
 
 
+def test_parse_picause_packed_edges():
+    """picause packs up to five edges per line (see pairlist2arrowstr)."""
+    text = """Structural Equation DAG Model
+8 Vertices and 8 Edges
+Edges:
+	x_8 --> x_6	x_8 --> x_4	x_2 --> x_7	x_8 --> x_5	x_3 --> x_5
+	x_3 --> x_7	x_3 --> x_4	x_5 --> x_6
+Topological Order:
+	x_1 < x_2
+"""
+    edges = parse_graph_text(text)
+    assert len(edges) == 8
+    assert "x_8 --> x_6" in edges
+    assert "x_5 --> x_6" in edges
+
+
+def test_parse_tetrad_numbered_edges():
+    text = """Graph Edges:
+1. x_1 --> x_2
+2. x_3 --- x_4
+Graph Attributes:
+"""
+    assert parse_graph_text(text) == ["x_1 --> x_2", "x_3 --- x_4"]
+
+
 def test_compare_perfect_recovery():
     true = ["x_1 --> x_2", "x_2 --> x_3"]
     metrics = compare_graphs(true, true)
