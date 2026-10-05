@@ -60,7 +60,23 @@ Outputs go to `discovery.output_directory` (default `./discovery_results`):
 
 Hyperparameters default to the old runner (`penalty_discount=1.0`, GFCI
 `alpha=0.01`). Override via `config.yaml` `discovery:` or CLI flags
-(`--iterations`, `--proportions`, `--penalty-discount`, `--alpha`, `--no-sem`).
+(`--iterations`, `--proportions`, `--penalty-discount`, `--alpha`, `--run-sem`).
+
+### Grid cost
+
+Default discovery settings are meant to be runnable, not a 100-iteration
+profile:
+
+- `discovery.iterations` is **20** (set to **100** for a “full” profile).
+- The **100% sample is run once** as the `dice_vs_full` baseline; repeated
+  draws apply only to proportions `< 1.0`.
+- **SEM is off** (`run_sem: false`). Turn it on with `--run-sem` or
+  `run_sem: true` in config.
+
+GFCI (and occasionally FGES) can fail on a draw (`search_ok=False`, e.g.
+nonpositive precision diagonal). Treat that as a **success rate by cell** —
+group `resampled_models_fastcausal.csv` by algorithm × proportion × effect
+size and take the mean of `search_ok`. `--cmd compute` prints this table.
 
 ### Dry-run / smoke test
 

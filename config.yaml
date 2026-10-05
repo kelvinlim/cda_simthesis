@@ -31,9 +31,11 @@ discovery:
     - 0.6
     - 0.5
     - 0.4
-  iterations: 100
+  # 20 is thesis-practical. Use 100 for a “full” profile (legacy NUM_ITERATIONS).
+  iterations: 20
   output_directory: ./discovery_results
-  run_sem: true
+  # SEM fitting is expensive; enable with --run-sem or run_sem: true
+  run_sem: false
   seed: 2025
 
 

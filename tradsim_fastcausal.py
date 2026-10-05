@@ -28,6 +28,19 @@ __version_info__ = ("0", "2", "0")
 __version__ = ".".join(__version_info__)
 
 DEFAULT_PROPORTIONS = [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
+DEFAULT_ITERATIONS = 20
+FULL_SAMPLE_ITERATIONS = 1
+
+
+def iterations_for_proportion(
+    proportion: float,
+    iterations: int,
+    full_sample_iters: int = FULL_SAMPLE_ITERATIONS,
+) -> int:
+    """Full-sample baseline is deterministic; only subsample fractions repeat."""
+    if float(proportion) >= 1.0:
+        return max(1, int(full_sample_iters))
+    return max(1, int(iterations))
 SUB_RE = re.compile(r"(?:^|_)sub-(?P<sub>\d+)", re.IGNORECASE)
 ITER_RE = re.compile(r"(?:^|_)iter-(?P<iter>\d+)", re.IGNORECASE)
 ES_RE = re.compile(r"(?:^|_)es-(?P<es>[0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
@@ -111,7 +124,7 @@ class TradSimFastcausal:
     def _iterations(self) -> int:
         if self.config.get("iterations") is not None:
             return int(self.config["iterations"])
-        return int(self.discovery.get("iterations", 100))
+        return int(self.discovery.get("iterations", DEFAULT_ITERATIONS))
 
     def _data_dir(self) -> Path:
         if self.config.get("data_dir"):
@@ -129,7 +142,7 @@ class TradSimFastcausal:
     def _run_sem(self) -> bool:
         if self.config.get("run_sem") is not None:
             return bool(self.config["run_sem"])
-        return bool(self.discovery.get("run_sem", True))
+        return bool(self.discovery.get("run_sem", False))
 
     def _alpha(self) -> float:
         return float(
@@ -186,7 +199,22 @@ class TradSimFastcausal:
         summary.to_csv(out, index=False)
         if self.verbose:
             print(f"Wrote {out} ({len(summary)} rows)")
+            self._print_search_success(summary)
         return summary
+
+    def _print_search_success(self, summary: pd.DataFrame) -> None:
+        """Report search_ok mean by algorithm × proportion × es (GFCI failures)."""
+        if summary.empty or "search_ok" not in summary.columns:
+            return
+        keys = [c for c in ("algorithm", "proportion", "es") if c in summary.columns]
+        rates = (
+            summary.groupby(keys, dropna=False)["search_ok"]
+            .mean()
+            .rename("success_rate")
+            .reset_index()
+        )
+        print("Search success rate by cell (algorithm × proportion × es):")
+        print(rates.to_string(index=False))
 
     def _run_proportions(
         self,
@@ -202,9 +230,7 @@ class TradSimFastcausal:
         run_sem = self._run_sem()
 
         for proportion in self._proportions():
-            n_iter = self._iterations()
-            # 100% sample is deterministic aside from algorithm internals;
-            # still loop so the CSV shape matches other fractions.
+            n_iter = iterations_for_proportion(proportion, self._iterations())
             for iteration in range(n_iter):
                 sampled = df.sample(
                     frac=proportion,
@@ -344,9 +370,18 @@ class TradSimFastcausal:
         out_dir = self._output_dir() / "smoke"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        sem = StructuralEquationDagModel(
-            num_var=8, num_edges=8, seed=self._seed(), beta=0.5
-        )
+        seed = self._seed()
+        count = 0
+        while True:
+            sem = StructuralEquationDagModel(
+                num_var=8, num_edges=8, seed=seed, beta=0.5
+            )
+            count += 1
+            if not sem.test_residual_overflow():
+                break
+            if count > 50:
+                raise RuntimeError("smoke SEM: residual overflow after 50 draws")
+            seed += 1
         df = sem.generate_data(80)
         csv_path = out_dir / "sub-001_vars-8_edges-8_es-0.25.csv"
         txt_path = csv_path.with_suffix(".txt")
@@ -405,7 +440,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data-dir", dest="data_dir", default=None)
     parser.add_argument("--output-dir", dest="output_dir", default=None)
-    parser.add_argument("--iterations", type=int, default=None)
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=None,
+        help="subsample repeats (default 20). Proportion 1.0 always runs once.",
+    )
     parser.add_argument(
         "--proportions",
         default=None,
