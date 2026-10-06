@@ -16,6 +16,7 @@ Java Tetrad / fastcda path is deprecated and is not required here.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 import textwrap
@@ -30,6 +31,7 @@ from tools.graph_metrics import compare_graphs, parse_picause_graph, skeleton_pa
 from tools.missingness import (
     apply_missingness,
     expand_missingness_grid,
+    group_missingness_draws,
     handle_missing,
     parse_float_list,
     parse_str_list,
@@ -52,6 +54,27 @@ def iterations_for_proportion(
     if float(proportion) >= 1.0:
         return max(1, int(full_sample_iters))
     return max(1, int(iterations))
+
+
+def cell_rng(base_seed: int, *parts) -> np.random.Generator:
+    """Independent RNG for one subsample or missingness draw.
+
+    Seed is a SHA-256 of ``(base_seed, *parts)``, so draws do not depend on
+    other cells consuming a shared stream. Strategies for the same
+    ``(mechanism, rate)`` should reuse one generator's missingness mask.
+    """
+    payload = "\0".join(_seed_part(p) for p in (base_seed, *parts))
+    digest = hashlib.sha256(payload.encode("utf-8")).digest()
+    words = [int.from_bytes(digest[i : i + 4], "little") for i in range(0, 16, 4)]
+    return np.random.default_rng(np.random.SeedSequence(words))
+
+
+def _seed_part(value: object) -> str:
+    if isinstance(value, float):
+        return f"{value:.10g}"
+    return str(value)
+
+
 SUB_RE = re.compile(r"(?:^|_)sub-(?P<sub>\d+)", re.IGNORECASE)
 ITER_RE = re.compile(r"(?:^|_)iter-(?P<iter>\d+)", re.IGNORECASE)
 ES_RE = re.compile(r"(?:^|_)es-(?P<es>[0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
@@ -204,8 +227,17 @@ class TradSimFastcausal:
             yaml_m.get("strategies") if enabled else ["none"],
         )
         return expand_missingness_grid(
-            mechanisms, rates, strategies, enabled=enabled
+            mechanisms,
+            rates,
+            strategies,
+            enabled=enabled,
+            mcar_impute=self._mcar_impute() if enabled else False,
         )
+
+    def _mcar_impute(self) -> bool:
+        if self.config.get("mcar_impute") is not None:
+            return bool(self.config["mcar_impute"])
+        return bool(self._missingness_yaml().get("mcar_impute", False))
 
     def _mar_covariates(self):
         if self.config.get("mar_covariates") is not None:
@@ -335,87 +367,128 @@ class TradSimFastcausal:
         meta: dict,
         algorithm: str,
     ) -> list[dict]:
-        rng = np.random.default_rng(self._seed())
         rows: list[dict] = []
         full_edges: list[str] | None = None
         knowledge = bool(self.config.get("knowledge", False))
         run_sem = self._run_sem()
-        missing_cells = self._missingness_cells()
+        missing_draws = group_missingness_draws(self._missingness_cells())
+        base_seed = self._seed()
 
         for proportion in self._proportions():
             n_iter = iterations_for_proportion(proportion, self._iterations())
             for iteration in range(n_iter):
+                sample_rng = cell_rng(
+                    base_seed, meta["case"], "subsample", proportion, iteration
+                )
                 sampled = df.sample(
                     frac=proportion,
-                    random_state=int(rng.integers(0, 2**31 - 1)),
+                    random_state=int(sample_rng.integers(0, 2**31 - 1)),
                 )
-                for mechanism, miss_rate, strategy in missing_cells:
-                    if self.verbose > 1:
-                        print(
-                            f"  {meta['case']} {algorithm} p={proportion} "
-                            f"iter={iteration + 1}/{n_iter} "
-                            f"{mechanism}@{miss_rate} {strategy}"
-                        )
-                    base = {
-                        "case": meta["case"],
-                        "subject": meta["subject"],
-                        "es": meta["es"],
-                        "algorithm": algorithm,
-                        "proportion": proportion,
-                        "iteration": iteration,
-                        "n_rows_sampled": len(sampled),
-                        "n_true_edges": len(skeleton_pairs(true_edges)),
-                        "missing_mechanism": mechanism,
-                        "missing_rate": miss_rate,
-                        "missing_strategy": strategy,
-                    }
-                    row = self._evaluate_draw(
-                        sampled=sampled,
-                        algorithm=algorithm,
-                        proportion=proportion,
-                        mechanism=mechanism,
-                        miss_rate=miss_rate,
-                        strategy=strategy,
-                        knowledge=knowledge,
-                        run_sem=run_sem,
-                        rng=rng,
+                for mechanism, miss_rate, strategies in missing_draws:
+                    miss_rng = cell_rng(
+                        base_seed,
+                        meta["case"],
+                        "missing",
+                        proportion,
+                        iteration,
+                        mechanism,
+                        miss_rate,
                     )
-                    recovered = row.pop("_recovered_edges", None)
-                    if (
-                        recovered is not None
-                        and proportion == 1.0
-                        and miss_rate == 0.0
-                        and full_edges is None
-                    ):
-                        full_edges = list(recovered)
-                    if recovered is not None and row.get("search_ok"):
-                        metrics = compare_graphs(
-                            true_edges,
-                            recovered,
-                            full_sample_edges=full_edges,
+                    try:
+                        corrupted, miss_info = apply_missingness(
+                            sampled,
+                            mechanism,
+                            miss_rate,
+                            miss_rng,
+                            covariates=self._mar_covariates(),
+                            mar_slope=self._mar_slope(),
                         )
-                        row.update(
-                            {
-                                "n_recovered_edges": metrics["n_recovered_edges"],
-                                "n_recovered_directed": metrics[
-                                    "n_recovered_directed"
-                                ],
-                                "diceCoeff": metrics["dice_skeleton"],
-                                "dice_skeleton": metrics["dice_skeleton"],
-                                "dice_directed": metrics["dice_directed"],
-                                "diceCoeffNodes": metrics["dice_nodes"],
-                                "dice_vs_full": metrics["dice_vs_full_skeleton"],
-                                "oriented_tp": metrics["oriented_tp"],
-                                "oriented_fp": metrics["oriented_fp"],
-                                "oriented_fn": metrics["oriented_fn"],
-                            }
+                        apply_error: str | None = None
+                    except Exception as exc:
+                        corrupted, miss_info = sampled, {}
+                        apply_error = str(exc)
+                    for strategy in strategies:
+                        if self.verbose > 1:
+                            print(
+                                f"  {meta['case']} {algorithm} p={proportion} "
+                                f"iter={iteration + 1}/{n_iter} "
+                                f"{mechanism}@{miss_rate} {strategy}"
+                            )
+                        base = {
+                            "case": meta["case"],
+                            "subject": meta["subject"],
+                            "es": meta["es"],
+                            "algorithm": algorithm,
+                            "proportion": proportion,
+                            "iteration": iteration,
+                            "n_rows_sampled": len(sampled),
+                            "n_true_edges": len(skeleton_pairs(true_edges)),
+                            "missing_mechanism": mechanism,
+                            "missing_rate": miss_rate,
+                            "missing_strategy": strategy,
+                        }
+                        if apply_error is not None:
+                            rows.append(
+                                {
+                                    **base,
+                                    "search_ok": False,
+                                    "error": apply_error,
+                                    "n_rows": 0,
+                                    "n_missing_rows": None,
+                                    "missing_rate_empirical": None,
+                                    "n_rows_dropped": None,
+                                    "n_imputed_cells": None,
+                                }
+                            )
+                            continue
+                        row = self._evaluate_draw(
+                            corrupted=corrupted,
+                            miss_info=miss_info,
+                            algorithm=algorithm,
+                            proportion=proportion,
+                            mechanism=mechanism,
+                            miss_rate=miss_rate,
+                            strategy=strategy,
+                            knowledge=knowledge,
+                            run_sem=run_sem,
                         )
-                    rows.append({**base, **row})
+                        recovered = row.pop("_recovered_edges", None)
+                        if (
+                            recovered is not None
+                            and proportion == 1.0
+                            and miss_rate == 0.0
+                            and full_edges is None
+                        ):
+                            full_edges = list(recovered)
+                        if recovered is not None and row.get("search_ok"):
+                            metrics = compare_graphs(
+                                true_edges,
+                                recovered,
+                                full_sample_edges=full_edges,
+                            )
+                            row.update(
+                                {
+                                    "n_recovered_edges": metrics["n_recovered_edges"],
+                                    "n_recovered_directed": metrics[
+                                        "n_recovered_directed"
+                                    ],
+                                    "diceCoeff": metrics["dice_skeleton"],
+                                    "dice_skeleton": metrics["dice_skeleton"],
+                                    "dice_directed": metrics["dice_directed"],
+                                    "diceCoeffNodes": metrics["dice_nodes"],
+                                    "dice_vs_full": metrics["dice_vs_full_skeleton"],
+                                    "oriented_tp": metrics["oriented_tp"],
+                                    "oriented_fp": metrics["oriented_fp"],
+                                    "oriented_fn": metrics["oriented_fn"],
+                                }
+                            )
+                        rows.append({**base, **row})
         return rows
 
     def _evaluate_draw(
         self,
-        sampled: pd.DataFrame,
+        corrupted: pd.DataFrame,
+        miss_info: dict,
         algorithm: str,
         proportion: float,
         mechanism: str,
@@ -423,26 +496,17 @@ class TradSimFastcausal:
         strategy: str,
         knowledge: bool,
         run_sem: bool,
-        rng: np.random.Generator,
     ) -> dict:
-        """Apply missingness, handle it, then run discovery on one draw."""
+        """Handle one missingness draw, then run discovery."""
         try:
-            corrupted, miss_info = apply_missingness(
-                sampled,
-                mechanism,
-                miss_rate,
-                rng,
-                covariates=self._mar_covariates(),
-                mar_slope=self._mar_slope(),
-            )
             handled, handle_info = handle_missing(corrupted, strategy)
         except Exception as exc:
             return {
                 "search_ok": False,
                 "error": str(exc),
                 "n_rows": 0,
-                "n_missing_rows": None,
-                "missing_rate_empirical": None,
+                "n_missing_rows": miss_info.get("n_missing_rows"),
+                "missing_rate_empirical": miss_info.get("missing_rate_empirical"),
                 "n_rows_dropped": None,
                 "n_imputed_cells": None,
             }
@@ -751,6 +815,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="fully observed MAR columns (default: first numeric column)",
     )
+    parser.add_argument(
+        "--mar-slope",
+        dest="mar_slope",
+        type=float,
+        default=None,
+        help="logistic slope for row MAR (default: discovery.missingness.mar_slope / 1.5)",
+    )
     parser.add_argument("--verbose", type=int, default=2)
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     return parser
@@ -777,6 +848,7 @@ def main(argv: list[str] | None = None) -> int:
         missing_rates=args.missing_rates,
         missing_strategies=args.missing_strategies,
         mar_covariates=args.mar_covariates,
+        mar_slope=args.mar_slope,
         verbose=args.verbose,
     )
     if args.cmd == "compute":

@@ -38,5 +38,7 @@ discovery:
     strategies:
       - complete_case
       - mean
+    # mean is used for MAR only; MCAR stays complete_case (mcar_impute: false).
+    mcar_impute: false
     mar_covariates: null
     mar_slope: 1.5

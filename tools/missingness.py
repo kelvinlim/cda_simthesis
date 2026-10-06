@@ -25,8 +25,13 @@ slope makes larger covariate values more likely to be missing.
 Handling defaults (cheap)
 -------------------------
 - ``complete_case`` / ``listwise``: drop any row with a NaN.
-- ``mean``: column-wise mean of observed values (default simple impute).
+  **This is the natural handler for whole-row MCAR.**
+- ``mean``: column-wise mean of observed values (default simple impute
+  for **MAR**, where covariate columns stay observed).
 - ``median``: column-wise median of observed values (optional extra).
+- Whole-row MCAR + mean/median just reinserts the column-mean (or median)
+  vector as near-duplicate rows. The default grid therefore skips impute
+  strategies for MCAR unless ``mcar_impute=True``.
 - ``mice`` / ``mnar``: not implemented (TODO).
 """
 
@@ -39,6 +44,7 @@ import pandas as pd
 
 MECHANISMS = ("none", "mcar", "mar")
 STRATEGIES = ("none", "complete_case", "mean", "median")
+IMPUTE_STRATEGIES = ("mean", "median")
 DEFAULT_MAR_SLOPE = 1.5
 DEFAULT_RATES = (0.0, 0.1, 0.2, 0.4)
 DEFAULT_STRATEGIES = ("complete_case", "mean")
@@ -105,12 +111,16 @@ def expand_missingness_grid(
     strategies: Iterable[str] | None,
     *,
     enabled: bool = True,
+    mcar_impute: bool = False,
 ) -> list[tuple[str, float, str]]:
     """Return ``(mechanism, rate, strategy)`` cells.
 
-    Rate 0 (or mechanism ``none``) is complete data and is collapsed to a
-    single ``strategy='none'`` cell so the handler grid does not repeat
-    identical searches.
+    Every ``rate <= 0`` (any mechanism) collapses to a single
+    ``("none", 0.0, "none")`` complete-data baseline so MCAR+MAR does not
+    double the no-missingness search.
+
+    Whole-row MCAR skips ``mean`` / ``median`` unless ``mcar_impute`` is
+    true (those imputes only reinsert column-mean vectors).
     """
     if not enabled:
         return [("none", 0.0, "none")]
@@ -132,16 +142,21 @@ def expand_missingness_grid(
             if rate < 0.0 or rate > 1.0:
                 raise ValueError(f"missingness rate must be in [0, 1], got {rate}")
             if mechanism == "none" or rate <= 0.0:
-                cell = (
-                    "none" if mechanism == "none" else mechanism,
-                    0.0,
-                    "none",
-                )
+                cell = ("none", 0.0, "none")
                 if cell not in seen:
                     cells.append(cell)
                     seen.add(cell)
                 continue
-            for strategy in strats:
+            use_strats = list(strats)
+            if mechanism == "mcar" and not mcar_impute:
+                use_strats = [s for s in strats if s not in IMPUTE_STRATEGIES]
+                if not use_strats:
+                    raise ValueError(
+                        "Whole-row MCAR + mean/median reinserts column-mean rows. "
+                        "Use complete_case (the natural MCAR handler), or set "
+                        "mcar_impute: true to force imputation."
+                    )
+            for strategy in use_strats:
                 if strategy == "mice":
                     raise NotImplementedError(
                         "Multiple imputation is a SA3 TODO; use complete_case or mean."
@@ -151,6 +166,22 @@ def expand_missingness_grid(
                     cells.append(cell)
                     seen.add(cell)
     return cells or [("none", 0.0, "none")]
+
+
+def group_missingness_draws(
+    cells: Iterable[tuple[str, float, str]],
+) -> list[tuple[str, float, list[str]]]:
+    """Group strategies that share one ``(mechanism, rate)`` missingness draw."""
+    grouped: list[tuple[str, float, list[str]]] = []
+    index: dict[tuple[str, float], int] = {}
+    for mechanism, rate, strategy in cells:
+        key = (mechanism, float(rate))
+        if key not in index:
+            index[key] = len(grouped)
+            grouped.append((mechanism, float(rate), [strategy]))
+        else:
+            grouped[index[key]][2].append(strategy)
+    return grouped
 
 
 def resolve_covariates(
@@ -260,12 +291,13 @@ def apply_row_mar(
     observed = resolve_covariates(df, covariates)
     incomplete = [col for col in df.columns if col not in observed]
     if not incomplete:
-        # Degenerate: every column is a covariate. Fall back to whole-row NaNs.
-        incomplete = list(df.columns)
-        observed = []
+        raise ValueError(
+            "Row MAR requires at least one non-covariate column to blank; "
+            f"every column is a covariate: {list(observed)}"
+        )
     out = df.copy()
     generator = _rng(rng)
-    scores = _mar_scores(df, observed or resolve_covariates(df, covariates))
+    scores = _mar_scores(df, observed)
     intercept = calibrate_mar_intercept(scores, rate, slope=slope)
     if rate <= 0.0:
         probs = np.zeros(len(df), dtype=float)

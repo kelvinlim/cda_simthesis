@@ -99,6 +99,7 @@ Config keys are under `discovery:` in `config.yaml`. CLI flags override them.
 | `--missing-rates` | `missingness.rates` | e.g. `0,0.1,0.2,0.4` |
 | `--missing-strategies` | `missingness.strategies` | `complete_case,mean` (`median` optional) |
 | `--mar-covariates` | `missingness.mar_covariates` | fully observed MAR columns (default: first numeric) |
+| `--mar-slope` | `missingness.mar_slope` | logistic slope for row MAR (default `1.5`) |
 
 Implementation (not extra CLIs):
 
@@ -161,23 +162,35 @@ or imputes. Do not treat `proportion=0.8` as “20% MCAR”.
 
 1. **Row MCAR** — each row is independently blanked with probability
    `missing_rate`. The whole row becomes NaN (unit nonresponse).
+   **Complete-case is the natural handler.** Mean/median on those rows
+   just reinserts the column-mean (or median) vector as near-duplicate
+   observations, so they are **not** in the default MCAR path. Set
+   `missingness.mcar_impute: true` only if you want that odd baseline.
+   Cell-wise MCAR (blanking some columns, not the whole row) is out of
+   scope here.
 2. **Row MAR** — one or more columns stay fully observed (default: the first
    numeric column, picause `x_1`; override with `missingness.mar_covariates`
    / `--mar-covariates`). A logistic model of those covariates sets
    `P(row incomplete)`. On a missing row, only the *other* columns become
    NaN. The intercept is calibrated so the mean predicted probability equals
-   the target rate; `missingness.mar_slope` (default `1.5`) controls how
-   strongly missingness tracks the covariates (positive slope → larger
-   covariate values more likely missing).
+   the target rate; `missingness.mar_slope` / `--mar-slope` (default `1.5`)
+   controls how strongly missingness tracks the covariates (positive slope →
+   larger covariate values more likely missing). If every column is listed
+   as a covariate, the runner raises (that would no longer be MAR).
 
 ### Handling defaults (cheap)
 
 - **`complete_case`** (`listwise` / `dropna`) — drop any row with a NaN.
-- **`mean`** — column-wise mean of observed values (default simple impute).
+  Use this for **MCAR**.
+- **`mean`** — column-wise mean of observed values. Default simple impute
+  for **MAR** (covariates stay observed, so filled values are not identical
+  copies of a single mean-row).
 - **`median`** — optional extra; same idea with column medians.
 
-Rate `0` is complete data and is collapsed to one `strategy=none` cell so
-the handler list is not repeated.
+Rate `0` (any mechanism) is complete data and collapses to one
+`("none", 0.0, "none")` cell so MCAR+MAR does not double the baseline
+search. The shared `strategies` list still includes `mean` for MAR; MCAR
+skips impute strategies unless `mcar_impute: true`.
 
 ### How to run MCAR, then MAR
 
@@ -186,13 +199,13 @@ subsample grid. Separate output dirs if you run the two mechanisms as
 two jobs (the CSV is overwritten otherwise):
 
 ```bash
-# MCAR only
+# MCAR: complete-case only (mean/median on whole-row blanks is a poor baseline)
 python tradsim_fastcausal.py --cmd compute --proportions 1.0 \
   --missing-mechanisms mcar --missing-rates 0,0.1,0.2,0.4 \
-  --missing-strategies complete_case,mean \
+  --missing-strategies complete_case \
   --output-dir ./discovery_results/sa3_mcar
 
-# then MAR (same picause CSVs / ground-truth DAGs)
+# then MAR (same picause CSVs / ground-truth DAGs; mean impute is useful here)
 python tradsim_fastcausal.py --cmd compute --proportions 1.0 \
   --missing-mechanisms mar --missing-rates 0,0.1,0.2,0.4 \
   --missing-strategies complete_case,mean \
@@ -207,8 +220,9 @@ python tradsim_fastcausal.py --cmd compute --proportions 1.0 --missingness
 python tradsim_fastcausal.py --cmd plot
 ```
 
-`--cmd smoke` and `config_smoke.yaml` enable a tiny grid (`mcar,mar` ×
-rate `0.2` × `complete_case,mean`) so the path stays cheap.
+`--cmd smoke` and `config_smoke.yaml` enable a tiny grid (`mcar` ×
+`complete_case`, `mar` × `complete_case,mean`, rate `0.2`) so the path
+stays cheap.
 
 ## Off the critical path (legacy Java / fastcda)
 

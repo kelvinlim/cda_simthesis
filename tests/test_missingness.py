@@ -9,6 +9,7 @@ from tools.missingness import (
     apply_row_mar,
     apply_row_mcar,
     expand_missingness_grid,
+    group_missingness_draws,
     handle_missing,
     parse_float_list,
     parse_str_list,
@@ -39,11 +40,41 @@ def test_expand_grid_disabled_and_rate_zero():
         ["complete_case", "mean"],
         enabled=True,
     )
-    assert ("mcar", 0.0, "none") in cells
-    assert ("mar", 0.0, "none") in cells
+    assert cells.count(("none", 0.0, "none")) == 1
+    assert ("mcar", 0.0, "none") not in cells
+    assert ("mar", 0.0, "none") not in cells
     assert ("mcar", 0.2, "complete_case") in cells
     assert ("mar", 0.2, "mean") in cells
+    # Default MCAR path drops mean/median (whole-row blanks → mean-vector rows).
+    assert ("mcar", 0.2, "mean") not in cells
     assert ("mcar", 0.0, "complete_case") not in cells
+
+
+def test_expand_grid_mcar_impute_opt_in():
+    cells = expand_missingness_grid(
+        ["mcar"], [0.2], ["complete_case", "mean"], mcar_impute=True
+    )
+    assert ("mcar", 0.2, "mean") in cells
+    assert ("mcar", 0.2, "complete_case") in cells
+
+
+def test_expand_grid_mcar_mean_only_requires_opt_in():
+    with pytest.raises(ValueError, match="complete_case"):
+        expand_missingness_grid(["mcar"], [0.2], ["mean"], mcar_impute=False)
+
+
+def test_group_missingness_draws_shares_strategies():
+    grouped = group_missingness_draws(
+        [
+            ("mcar", 0.2, "complete_case"),
+            ("mar", 0.2, "complete_case"),
+            ("mar", 0.2, "mean"),
+        ]
+    )
+    assert grouped == [
+        ("mcar", 0.2, ["complete_case"]),
+        ("mar", 0.2, ["complete_case", "mean"]),
+    ]
 
 
 def test_expand_grid_rejects_mnar_and_mice():
@@ -80,6 +111,12 @@ def test_row_mar_depends_on_observed_covariate():
     assert not out.loc[~mask].isna().any(axis=None)
     # Positive slope: missing rows have larger x_1 than kept rows.
     assert df.loc[mask, "x_1"].mean() > df.loc[~mask, "x_1"].mean() + 0.4
+
+
+def test_row_mar_rejects_all_columns_as_covariates():
+    df = _frame(n=20, cols=3)
+    with pytest.raises(ValueError, match="non-covariate"):
+        apply_row_mar(df, 0.2, rng=0, covariates=list(df.columns))
 
 
 def test_apply_missingness_rate_zero_is_noop():

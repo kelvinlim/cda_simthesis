@@ -32,10 +32,17 @@ def test_smoke_fges(tmp_path):
     assert set(ok["missing_strategy"]) == {"complete_case", "mean"}
     assert set(ok["missing_rate"]) == {0.2}
     assert (ok["n_missing_rows"] > 0).all()
+    assert set(ok.loc[ok["missing_mechanism"] == "mcar", "missing_strategy"]) == {
+        "complete_case"
+    }
+    mar = ok[ok["missing_mechanism"] == "mar"]
+    assert set(mar["missing_strategy"]) == {"complete_case", "mean"}
+    for _, grp in mar.groupby(["proportion", "iteration"]):
+        assert grp["n_missing_rows"].nunique() == 1
     assert {"oriented_tp", "oriented_fp", "oriented_fn"}.issubset(ok.columns)
-    # 2 mechanisms × 1 rate × 2 strategies; p=1.0 once, p=0.8 three times.
-    assert len(summary[summary["proportion"] == 1.0]) == 4
-    assert len(summary[summary["proportion"] == 0.8]) == 12
+    # MCAR × complete_case + MAR × {complete_case, mean}; p=1.0 once, p=0.8 × 3.
+    assert len(summary[summary["proportion"] == 1.0]) == 3
+    assert len(summary[summary["proportion"] == 0.8]) == 9
 
 
 def test_smoke_fges_subsample_only(tmp_path):

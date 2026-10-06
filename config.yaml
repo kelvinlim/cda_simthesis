@@ -52,8 +52,10 @@ discovery:
       - 0.2
       - 0.4
     strategies:
-      - complete_case   # listwise delete
-      - mean            # column-mean of observed values
+      - complete_case   # listwise delete (natural whole-row MCAR handler)
+      - mean            # MAR simple impute; skipped for MCAR unless mcar_impute
+    # Whole-row MCAR + mean/median just reinserts column-mean rows.
+    mcar_impute: false
     # Fully observed columns that drive row-MAR probability.
     # null = first numeric column (picause x_1).
     mar_covariates: null
