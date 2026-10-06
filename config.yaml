@@ -37,5 +37,28 @@ discovery:
   # SEM fitting is expensive; enable with --run-sem or run_sem: true
   run_sem: false
   seed: 2025
+  # SA3 row-missingness (separate from subsample proportions). Off by default
+  # so `python tradsim_fastcausal.py --cmd compute` stays a subsample-only run.
+  # Enable with --missingness or missingness.enabled: true, and prefer
+  # --proportions 1.0 so the grid stays cheap.
+  missingness:
+    enabled: false
+    mechanisms:
+      - mcar
+      - mar
+    rates:
+      - 0.0
+      - 0.1
+      - 0.2
+      - 0.4
+    strategies:
+      - complete_case   # listwise delete (natural whole-row MCAR handler)
+      - mean            # MAR simple impute; skipped for MCAR unless mcar_impute
+    # Whole-row MCAR + mean/median just reinserts column-mean rows.
+    mcar_impute: false
+    # Fully observed columns that drive row-MAR probability.
+    # null = first numeric column (picause x_1).
+    mar_covariates: null
+    mar_slope: 1.5
 
 

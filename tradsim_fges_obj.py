@@ -1591,10 +1591,10 @@ class TradSimFGES:
         """
         Impute the data
 
-        TODO (SA3): this still uses the Java TetradWrap SEM helpers and
-        real-data CSVs under ``data/``. The fastcausal path in
-        ``tradsim_fastcausal.py`` does not yet wrap missingness+imputation
-        against simulated ground truth. Keep this method as a hook only. 
+        TODO (SA3 clinical): this still uses real-data CSVs under ``data/``.
+        The simulation half (row MCAR / MAR vs picause ground truth) lives
+        in ``tradsim_fastcausal.py`` + ``tools/missingness.py``. Keep this
+        method as a clinical-data hook only. 
 
         Args:
             iterations (_type_, optional): _description_. Defaults to NUM_ITERATIONS.

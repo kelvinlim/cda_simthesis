@@ -3,7 +3,11 @@
 
 Compares recovered graphs to picause ground-truth ``.txt`` files and to the
 100%-sample recovered graph (legacy Dice), across subsample fractions
-100% → 40%.
+100% → 40% and, optionally, a row-missingness grid (MCAR then MAR).
+
+Subsample ``proportion`` and missingness ``rate`` are different axes:
+proportion randomly *keeps* complete rows; MCAR/MAR *blanks* rows that a
+handler then drops or imputes.
 
 This replaces ``tradsim_fges_obj.py`` for the simulation workflow. The older
 Java Tetrad / fastcda path is deprecated and is not required here.
@@ -12,6 +16,7 @@ Java Tetrad / fastcda path is deprecated and is not required here.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 import textwrap
@@ -23,8 +28,16 @@ import yaml
 
 from tools.fastcausal_backend import run_search
 from tools.graph_metrics import compare_graphs, parse_picause_graph, skeleton_pairs
+from tools.missingness import (
+    apply_missingness,
+    expand_missingness_grid,
+    group_missingness_draws,
+    handle_missing,
+    parse_float_list,
+    parse_str_list,
+)
 
-__version_info__ = ("0", "2", "0")
+__version_info__ = ("0", "3", "0")
 __version__ = ".".join(__version_info__)
 
 DEFAULT_PROPORTIONS = [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
@@ -41,6 +54,27 @@ def iterations_for_proportion(
     if float(proportion) >= 1.0:
         return max(1, int(full_sample_iters))
     return max(1, int(iterations))
+
+
+def cell_rng(base_seed: int, *parts) -> np.random.Generator:
+    """Independent RNG for one subsample or missingness draw.
+
+    Seed is a SHA-256 of ``(base_seed, *parts)``, so draws do not depend on
+    other cells consuming a shared stream. Strategies for the same
+    ``(mechanism, rate)`` should reuse one generator's missingness mask.
+    """
+    payload = "\0".join(_seed_part(p) for p in (base_seed, *parts))
+    digest = hashlib.sha256(payload.encode("utf-8")).digest()
+    words = [int.from_bytes(digest[i : i + 4], "little") for i in range(0, 16, 4)]
+    return np.random.default_rng(np.random.SeedSequence(words))
+
+
+def _seed_part(value: object) -> str:
+    if isinstance(value, float):
+        return f"{value:.10g}"
+    return str(value)
+
+
 SUB_RE = re.compile(r"(?:^|_)sub-(?P<sub>\d+)", re.IGNORECASE)
 ITER_RE = re.compile(r"(?:^|_)iter-(?P<iter>\d+)", re.IGNORECASE)
 ES_RE = re.compile(r"(?:^|_)es-(?P<es>[0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
@@ -159,6 +193,63 @@ class TradSimFastcausal:
     def _seed(self) -> int:
         return int(self.config.get("seed") or self.discovery.get("seed", 2025))
 
+    def _missingness_yaml(self) -> dict:
+        raw = self.discovery.get("missingness") or {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _missingness_enabled(self) -> bool:
+        if self.config.get("missingness") is not None:
+            return bool(self.config["missingness"])
+        if any(
+            self.config.get(key) is not None
+            for key in (
+                "missing_mechanisms",
+                "missing_rates",
+                "missing_strategies",
+            )
+        ):
+            return True
+        return bool(self._missingness_yaml().get("enabled", False))
+
+    def _missingness_cells(self) -> list[tuple[str, float, str]]:
+        yaml_m = self._missingness_yaml()
+        enabled = self._missingness_enabled()
+        mechanisms = parse_str_list(
+            self.config.get("missing_mechanisms"),
+            yaml_m.get("mechanisms") if enabled else ["none"],
+        )
+        rates = parse_float_list(
+            self.config.get("missing_rates"),
+            yaml_m.get("rates") if enabled else [0.0],
+        )
+        strategies = parse_str_list(
+            self.config.get("missing_strategies"),
+            yaml_m.get("strategies") if enabled else ["none"],
+        )
+        return expand_missingness_grid(
+            mechanisms,
+            rates,
+            strategies,
+            enabled=enabled,
+            mcar_impute=self._mcar_impute() if enabled else False,
+        )
+
+    def _mcar_impute(self) -> bool:
+        if self.config.get("mcar_impute") is not None:
+            return bool(self.config["mcar_impute"])
+        return bool(self._missingness_yaml().get("mcar_impute", False))
+
+    def _mar_covariates(self):
+        if self.config.get("mar_covariates") is not None:
+            return self.config["mar_covariates"]
+        return self._missingness_yaml().get("mar_covariates")
+
+    def _mar_slope(self) -> float:
+        yaml_m = self._missingness_yaml()
+        if self.config.get("mar_slope") is not None:
+            return float(self.config["mar_slope"])
+        return float(yaml_m.get("mar_slope", 1.5))
+
     def compute(self) -> pd.DataFrame:
         data_dir = self._data_dir()
         csvs = discover_sim_csvs(data_dir, self.config.get("glob", "*.csv"))
@@ -200,21 +291,74 @@ class TradSimFastcausal:
         if self.verbose:
             print(f"Wrote {out} ({len(summary)} rows)")
             self._print_search_success(summary)
+            self._print_missingness_metrics(summary)
         return summary
 
     def _print_search_success(self, summary: pd.DataFrame) -> None:
         """Report search_ok mean by algorithm × proportion × es (GFCI failures)."""
         if summary.empty or "search_ok" not in summary.columns:
             return
-        keys = [c for c in ("algorithm", "proportion", "es") if c in summary.columns]
+        keys = [
+            c
+            for c in (
+                "algorithm",
+                "proportion",
+                "es",
+                "missing_mechanism",
+                "missing_rate",
+                "missing_strategy",
+            )
+            if c in summary.columns
+        ]
         rates = (
             summary.groupby(keys, dropna=False)["search_ok"]
             .mean()
             .rename("success_rate")
             .reset_index()
         )
-        print("Search success rate by cell (algorithm × proportion × es):")
+        print(
+            "Search success rate by cell "
+            "(algorithm × proportion × es × missingness):"
+        )
         print(rates.to_string(index=False))
+
+    def _print_missingness_metrics(self, summary: pd.DataFrame) -> None:
+        """Mean Dice / oriented counts by mechanism × rate × strategy."""
+        needed = {
+            "missing_mechanism",
+            "missing_rate",
+            "missing_strategy",
+            "dice_skeleton",
+        }
+        if summary.empty or not needed.issubset(summary.columns):
+            return
+        if (
+            summary["missing_rate"].nunique() <= 1
+            and (summary["missing_mechanism"] == "none").all()
+        ):
+            return
+        ok = summary
+        if "search_ok" in summary.columns:
+            ok = summary[summary["search_ok"] != False]
+        if ok.empty:
+            return
+        keys = ["missing_mechanism", "missing_rate", "missing_strategy"]
+        if "algorithm" in ok.columns and ok["algorithm"].nunique() > 1:
+            keys = ["algorithm", *keys]
+        cols = [
+            c
+            for c in (
+                "dice_skeleton",
+                "dice_directed",
+                "oriented_tp",
+                "oriented_fp",
+                "oriented_fn",
+            )
+            if c in ok.columns
+        ]
+        table = ok.groupby(keys, dropna=False)[cols].mean().reset_index()
+        print("Discovery vs simulated truth by missingness cell:")
+        print(table.to_string(index=False))
 
     def _run_proportions(
         self,
@@ -223,83 +367,194 @@ class TradSimFastcausal:
         meta: dict,
         algorithm: str,
     ) -> list[dict]:
-        rng = np.random.default_rng(self._seed())
         rows: list[dict] = []
         full_edges: list[str] | None = None
         knowledge = bool(self.config.get("knowledge", False))
         run_sem = self._run_sem()
+        missing_draws = group_missingness_draws(self._missingness_cells())
+        base_seed = self._seed()
 
         for proportion in self._proportions():
             n_iter = iterations_for_proportion(proportion, self._iterations())
             for iteration in range(n_iter):
+                sample_rng = cell_rng(
+                    base_seed, meta["case"], "subsample", proportion, iteration
+                )
                 sampled = df.sample(
                     frac=proportion,
-                    random_state=int(rng.integers(0, 2**31 - 1)),
+                    random_state=int(sample_rng.integers(0, 2**31 - 1)),
                 )
-                resampled = standardize_df(sampled)
-                if self.verbose > 1:
-                    print(
-                        f"  {meta['case']} {algorithm} p={proportion} "
-                        f"iter={iteration + 1}/{n_iter}"
+                for mechanism, miss_rate, strategies in missing_draws:
+                    miss_rng = cell_rng(
+                        base_seed,
+                        meta["case"],
+                        "missing",
+                        proportion,
+                        iteration,
+                        mechanism,
+                        miss_rate,
                     )
-                base = {
-                    "case": meta["case"],
-                    "subject": meta["subject"],
-                    "es": meta["es"],
-                    "algorithm": algorithm,
-                    "proportion": proportion,
-                    "iteration": iteration,
-                    "n_rows": len(resampled),
-                    "n_true_edges": len(skeleton_pairs(true_edges)),
-                }
-                try:
-                    result = run_search(
-                        resampled,
-                        algorithm=algorithm,
-                        alpha=self._alpha(),
-                        penalty_discount=self._penalty(),
-                        knowledge=knowledge,
-                        run_sem=run_sem,
-                        verbose=max(self.verbose - 2, 0),
-                    )
-                except Exception as exc:
-                    print(
-                        f"Warning: {algorithm} failed at p={proportion} "
-                        f"iter={iteration}: {exc}"
-                    )
-                    rows.append({**base, "search_ok": False, "error": str(exc)})
-                    continue
-
-                recovered = result["edges"]
-                if proportion == 1.0 and full_edges is None:
-                    full_edges = list(recovered)
-
-                metrics = compare_graphs(
-                    true_edges,
-                    recovered,
-                    full_sample_edges=full_edges,
-                )
-                es_mean, es_std = mean_abs_estimates(result.get("sem_summary"))
-                rows.append(
-                    {
-                        **base,
-                        "search_ok": True,
-                        "error": None,
-                        "n_recovered_edges": metrics["n_recovered_edges"],
-                        "n_recovered_directed": metrics["n_recovered_directed"],
-                        "diceCoeff": metrics["dice_skeleton"],
-                        "dice_skeleton": metrics["dice_skeleton"],
-                        "dice_directed": metrics["dice_directed"],
-                        "diceCoeffNodes": metrics["dice_nodes"],
-                        "dice_vs_full": metrics["dice_vs_full_skeleton"],
-                        "oriented_tp": metrics["oriented_tp"],
-                        "oriented_fp": metrics["oriented_fp"],
-                        "oriented_fn": metrics["oriented_fn"],
-                        "ESMean": es_mean,
-                        "ESStd": es_std,
-                    }
-                )
+                    try:
+                        corrupted, miss_info = apply_missingness(
+                            sampled,
+                            mechanism,
+                            miss_rate,
+                            miss_rng,
+                            covariates=self._mar_covariates(),
+                            mar_slope=self._mar_slope(),
+                        )
+                        apply_error: str | None = None
+                    except Exception as exc:
+                        corrupted, miss_info = sampled, {}
+                        apply_error = str(exc)
+                    for strategy in strategies:
+                        if self.verbose > 1:
+                            print(
+                                f"  {meta['case']} {algorithm} p={proportion} "
+                                f"iter={iteration + 1}/{n_iter} "
+                                f"{mechanism}@{miss_rate} {strategy}"
+                            )
+                        base = {
+                            "case": meta["case"],
+                            "subject": meta["subject"],
+                            "es": meta["es"],
+                            "algorithm": algorithm,
+                            "proportion": proportion,
+                            "iteration": iteration,
+                            "n_rows_sampled": len(sampled),
+                            "n_true_edges": len(skeleton_pairs(true_edges)),
+                            "missing_mechanism": mechanism,
+                            "missing_rate": miss_rate,
+                            "missing_strategy": strategy,
+                        }
+                        if apply_error is not None:
+                            rows.append(
+                                {
+                                    **base,
+                                    "search_ok": False,
+                                    "error": apply_error,
+                                    "n_rows": 0,
+                                    "n_missing_rows": None,
+                                    "missing_rate_empirical": None,
+                                    "n_rows_dropped": None,
+                                    "n_imputed_cells": None,
+                                }
+                            )
+                            continue
+                        row = self._evaluate_draw(
+                            corrupted=corrupted,
+                            miss_info=miss_info,
+                            algorithm=algorithm,
+                            proportion=proportion,
+                            mechanism=mechanism,
+                            miss_rate=miss_rate,
+                            strategy=strategy,
+                            knowledge=knowledge,
+                            run_sem=run_sem,
+                        )
+                        recovered = row.pop("_recovered_edges", None)
+                        if (
+                            recovered is not None
+                            and proportion == 1.0
+                            and miss_rate == 0.0
+                            and full_edges is None
+                        ):
+                            full_edges = list(recovered)
+                        if recovered is not None and row.get("search_ok"):
+                            metrics = compare_graphs(
+                                true_edges,
+                                recovered,
+                                full_sample_edges=full_edges,
+                            )
+                            row.update(
+                                {
+                                    "n_recovered_edges": metrics["n_recovered_edges"],
+                                    "n_recovered_directed": metrics[
+                                        "n_recovered_directed"
+                                    ],
+                                    "diceCoeff": metrics["dice_skeleton"],
+                                    "dice_skeleton": metrics["dice_skeleton"],
+                                    "dice_directed": metrics["dice_directed"],
+                                    "diceCoeffNodes": metrics["dice_nodes"],
+                                    "dice_vs_full": metrics["dice_vs_full_skeleton"],
+                                    "oriented_tp": metrics["oriented_tp"],
+                                    "oriented_fp": metrics["oriented_fp"],
+                                    "oriented_fn": metrics["oriented_fn"],
+                                }
+                            )
+                        rows.append({**base, **row})
         return rows
+
+    def _evaluate_draw(
+        self,
+        corrupted: pd.DataFrame,
+        miss_info: dict,
+        algorithm: str,
+        proportion: float,
+        mechanism: str,
+        miss_rate: float,
+        strategy: str,
+        knowledge: bool,
+        run_sem: bool,
+    ) -> dict:
+        """Handle one missingness draw, then run discovery."""
+        try:
+            handled, handle_info = handle_missing(corrupted, strategy)
+        except Exception as exc:
+            return {
+                "search_ok": False,
+                "error": str(exc),
+                "n_rows": 0,
+                "n_missing_rows": miss_info.get("n_missing_rows"),
+                "missing_rate_empirical": miss_info.get("missing_rate_empirical"),
+                "n_rows_dropped": None,
+                "n_imputed_cells": None,
+            }
+
+        extras = {
+            "n_rows": len(handled),
+            "n_missing_rows": miss_info.get("n_missing_rows"),
+            "missing_rate_empirical": miss_info.get("missing_rate_empirical"),
+            "n_rows_dropped": handle_info.get("n_rows_dropped"),
+            "n_imputed_cells": handle_info.get("n_imputed_cells"),
+        }
+        if handled.empty or len(handled) < 3:
+            return {
+                **extras,
+                "search_ok": False,
+                "error": (
+                    f"too few rows after {strategy} "
+                    f"(n={len(handled)}) for {algorithm}"
+                ),
+            }
+
+        resampled = standardize_df(handled)
+        try:
+            result = run_search(
+                resampled,
+                algorithm=algorithm,
+                alpha=self._alpha(),
+                penalty_discount=self._penalty(),
+                knowledge=knowledge,
+                run_sem=run_sem,
+                verbose=max(self.verbose - 2, 0),
+            )
+        except Exception as exc:
+            print(
+                f"Warning: {algorithm} failed at p={proportion} "
+                f"{mechanism}@{miss_rate} {strategy}: {exc}"
+            )
+            return {**extras, "search_ok": False, "error": str(exc)}
+
+        es_mean, es_std = mean_abs_estimates(result.get("sem_summary"))
+        return {
+            **extras,
+            "search_ok": True,
+            "error": None,
+            "ESMean": es_mean,
+            "ESStd": es_std,
+            "_recovered_edges": result["edges"],
+        }
 
     def plot(self, summary: pd.DataFrame | None = None) -> None:
         import matplotlib.pyplot as plt
@@ -321,12 +576,17 @@ class TradSimFastcausal:
             raise ValueError("Summary dataframe is empty; nothing to plot.")
         hue = "case" if summary["case"].nunique() > 1 else None
         extra_hue = "algorithm" if summary["algorithm"].nunique() > 1 else hue
+        subsample = summary
+        if "missing_rate" in summary.columns:
+            complete = summary[summary["missing_rate"] == 0.0]
+            if not complete.empty:
+                subsample = complete
 
-        def _box(y, filename, title):
+        def _box(data, x, y, filename, title, hue_col=None):
             plt.figure(figsize=(10, 6))
-            plot_hue = extra_hue or hue
-            kwargs = {"x": "proportion", "y": y, "data": summary}
-            if plot_hue is not None:
+            plot_hue = hue_col if hue_col is not None else (extra_hue or hue)
+            kwargs = {"x": x, "y": y, "data": data}
+            if plot_hue is not None and plot_hue in data.columns:
                 kwargs["hue"] = plot_hue
                 kwargs["palette"] = "bright"
             else:
@@ -341,26 +601,62 @@ class TradSimFastcausal:
                 print(f"Wrote {path}")
 
         _box(
+            subsample,
+            "proportion",
             "dice_skeleton",
             "dice_skeleton_by_proportion.png",
             "Skeleton Dice vs ground truth by subsample proportion",
         )
         _box(
+            subsample,
+            "proportion",
             "dice_directed",
             "dice_directed_by_proportion.png",
             "Directed Dice vs ground truth by subsample proportion",
         )
-        if summary["dice_vs_full"].notna().any():
+        if subsample["dice_vs_full"].notna().any():
             _box(
+                subsample,
+                "proportion",
                 "dice_vs_full",
                 "dice_vs_full_by_proportion.png",
                 "Skeleton Dice vs 100% recovered graph by subsample proportion",
             )
-        if summary["ESMean"].notna().any():
+        if subsample["ESMean"].notna().any():
             _box(
+                subsample,
+                "proportion",
                 "ESMean",
                 "esmean_by_proportion.png",
                 "Mean |SEM estimate| by subsample proportion",
+            )
+
+        if "missing_rate" in summary.columns and (
+            summary["missing_rate"].nunique() > 1
+            or summary["missing_mechanism"].nunique() > 1
+            or summary["missing_strategy"].nunique() > 1
+        ):
+            miss = summary.copy()
+            miss["missing_cell"] = (
+                miss["missing_mechanism"].astype(str)
+                + " / "
+                + miss["missing_strategy"].astype(str)
+            )
+            _box(
+                miss,
+                "missing_rate",
+                "dice_skeleton",
+                "dice_skeleton_by_missing_rate.png",
+                "Skeleton Dice vs ground truth by row-missingness rate",
+                hue_col="missing_cell",
+            )
+            _box(
+                miss,
+                "missing_rate",
+                "dice_directed",
+                "dice_directed_by_missing_rate.png",
+                "Directed Dice vs ground truth by row-missingness rate",
+                hue_col="missing_cell",
             )
 
     def smoke(self) -> pd.DataFrame:
@@ -396,11 +692,30 @@ class TradSimFastcausal:
             self.config["run_sem"] = False
         self.config["output_dir"] = str(out_dir)
         self.config["glob"] = "sub-*.csv"
+        # Tiny SA3 grid unless the caller explicitly disabled missingness.
+        if self.config.get("missingness") is not False:
+            self.config["missingness"] = True
+            self.config["missing_mechanisms"] = (
+                self.config.get("missing_mechanisms") or "mcar,mar"
+            )
+            self.config["missing_rates"] = self.config.get("missing_rates") or "0.2"
+            self.config["missing_strategies"] = (
+                self.config.get("missing_strategies") or "complete_case,mean"
+            )
 
         summary = self.compute()
         if summary.empty:
             raise RuntimeError("Smoke run produced no result rows.")
-        required = {"dice_skeleton", "algorithm", "proportion", "case"}
+        required = {
+            "dice_skeleton",
+            "algorithm",
+            "proportion",
+            "case",
+            "missing_mechanism",
+            "missing_rate",
+            "missing_strategy",
+            "oriented_tp",
+        }
         missing = required - set(summary.columns)
         if missing:
             raise RuntimeError(f"Smoke CSV missing columns: {missing}")
@@ -418,6 +733,7 @@ def build_parser() -> argparse.ArgumentParser:
         Examples:
           python simdata.py --cmd sim
           python tradsim_fastcausal.py --cmd compute
+          python tradsim_fastcausal.py --cmd compute --proportions 1.0 --missingness
           python tradsim_fastcausal.py --cmd plot
           python tradsim_fastcausal.py --cmd smoke
         """
@@ -462,6 +778,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--run-sem", dest="run_sem", action="store_true", default=None)
     parser.add_argument("--no-sem", dest="run_sem", action="store_false")
+    parser.add_argument(
+        "--missingness",
+        dest="missingness",
+        action="store_true",
+        default=None,
+        help="enable the discovery.missingness grid (row MCAR / MAR)",
+    )
+    parser.add_argument(
+        "--no-missingness",
+        dest="missingness",
+        action="store_false",
+        help="disable missingness (subsample only)",
+    )
+    parser.add_argument(
+        "--missing-mechanisms",
+        dest="missing_mechanisms",
+        default=None,
+        help="comma-separated: none,mcar,mar (enables missingness)",
+    )
+    parser.add_argument(
+        "--missing-rates",
+        dest="missing_rates",
+        default=None,
+        help="comma-separated row-missing rates, e.g. 0,0.1,0.2,0.4",
+    )
+    parser.add_argument(
+        "--missing-strategies",
+        dest="missing_strategies",
+        default=None,
+        help="comma-separated: complete_case,mean (median optional)",
+    )
+    parser.add_argument(
+        "--mar-covariates",
+        dest="mar_covariates",
+        default=None,
+        help="fully observed MAR columns (default: first numeric column)",
+    )
+    parser.add_argument(
+        "--mar-slope",
+        dest="mar_slope",
+        type=float,
+        default=None,
+        help="logistic slope for row MAR (default: discovery.missingness.mar_slope / 1.5)",
+    )
     parser.add_argument("--verbose", type=int, default=2)
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     return parser
@@ -483,6 +843,12 @@ def main(argv: list[str] | None = None) -> int:
         glob=args.glob,
         knowledge=args.knowledge,
         run_sem=args.run_sem,
+        missingness=args.missingness,
+        missing_mechanisms=args.missing_mechanisms,
+        missing_rates=args.missing_rates,
+        missing_strategies=args.missing_strategies,
+        mar_covariates=args.mar_covariates,
+        mar_slope=args.mar_slope,
         verbose=args.verbose,
     )
     if args.cmd == "compute":
