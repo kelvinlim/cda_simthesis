@@ -1,15 +1,17 @@
 # cda_simthesis
 
-Thesis EMA simulation + causal discovery: how **subsample size / missingness**
-affects **FGES** and **GFCI** recovery versus **simulated ground-truth** graphs.
+Thesis EMA simulation + causal discovery: how **subsample size / missingness /
+discovery hyperparameters** affect **FGES** and **GFCI** recovery versus
+**simulated ground-truth** graphs.
 
 The intended loop is:
 
 1. Generate SEM data and a known DAG (`simdata.py` + `picause.py`).
 2. Run discovery on those CSVs (`tradsim_fastcausal.py`).
 3. Compare recovered edges to the picause `.txt` ground truth (Dice, oriented
-   counts) across subsample fractions ~100% → 40% and, optionally, a row
-   missingness grid (MCAR then MAR, complete-case vs mean imputation).
+   counts, FPR/TPR) across subsample fractions ~100% → 40% and, optionally, a
+   row missingness grid (MCAR then MAR) or an SA4 hyperparameter / target-FPR
+   sweep.
 
 Discovery uses [fastcausal](https://github.com/kelvinlim/fastcausal) and
 [tetrad-port](https://github.com/kelvinlim/tetrad-port) (C++ Tetrad, **no
@@ -36,6 +38,10 @@ python tradsim_fastcausal.py --cmd plot
 # 4. SA3 row-missingness vs the same picause DAGs (MCAR + MAR, p=1.0)
 python tradsim_fastcausal.py --cmd compute --proportions 1.0 --missingness
 python tradsim_fastcausal.py --cmd plot
+
+# 5. SA4 HP / target-FPR selection vs the same picause DAGs (complete data)
+python tradsim_fastcausal.py --cmd compute --proportions 1.0 --hp-sweep
+python tradsim_fastcausal.py --cmd plot
 ```
 
 GFCI, or both algorithms:
@@ -55,6 +61,7 @@ python -c "import fastcausal; print(fastcausal.__version__)"
 
 ```bash
 python tradsim_fastcausal.py --cmd smoke
+python tradsim_fastcausal.py --cmd smoke --hp-sweep
 ```
 
 or a 1-file simdata grid:
@@ -85,8 +92,8 @@ Config keys are under `discovery:` in `config.yaml`. CLI flags override them.
 | `--algorithm` | `algorithm` | `fges` (default), `gfci`, or `both` |
 | `--iterations` | `iterations` | subsample repeats (default **20**) |
 | `--proportions` | `proportions` | e.g. `1.0,0.9,...,0.4` |
-| `--penalty-discount` | `penalty_discount` | SEM-BIC penalty (default `1.0`) |
-| `--alpha` | `alpha` | GFCI Fisher-Z (default `0.01`) |
+| `--penalty-discount` | `penalty_discount` | SEM-BIC penalty (default `1.0`; scalar when sweep is off) |
+| `--alpha` | `alpha` | GFCI Fisher-Z (default `0.01`; scalar when sweep is off) |
 | `--run-sem` / `--no-sem` | `run_sem` | SEM fitting (default **off**) |
 | `--data-dir` | `simulation.data_directory` | input CSVs |
 | `--output-dir` | `output_directory` | results (default `./discovery_results`) |
@@ -100,12 +107,17 @@ Config keys are under `discovery:` in `config.yaml`. CLI flags override them.
 | `--missing-strategies` | `missingness.strategies` | `complete_case,mean` (`median` optional) |
 | `--mar-covariates` | `missingness.mar_covariates` | fully observed MAR columns (default: first numeric) |
 | `--mar-slope` | `missingness.mar_slope` | logistic slope for row MAR (default `1.5`) |
+| `--hp-sweep` / `--no-hp-sweep` | `hp_sweep.enabled` | FGES penalty / GFCI alpha grid (default **off**) |
+| `--penalty-discounts` | `hp_sweep.penalty_discounts` | e.g. `1,2,4` (enables hp-sweep) |
+| `--alphas` | `hp_sweep.alphas` | e.g. `0.01,0.05` (enables hp-sweep; GFCI) |
+| `--target-fprs` | `hp_sweep.target_fprs` | e.g. `0.05,0.10` (enables hp-sweep) |
 
 Implementation (not extra CLIs):
 
 - `tools/fastcausal_backend.py` — FGES/GFCI via `FastCausal.run_search`
-- `tools/graph_metrics.py` — parse picause `.txt` edges; Dice / oriented counts
+- `tools/graph_metrics.py` — parse picause `.txt` edges; Dice / oriented counts / FPR
 - `tools/missingness.py` — row MCAR / MAR generators and cheap handlers
+- `tools/hp_sweep.py` — FGES/GFCI HP grid and target-FPR selection
 
 ### Metrics
 
@@ -115,6 +127,11 @@ Written to `discovery_results/resampled_models_fastcausal.csv` (and plots from
 - **`dice_skeleton` / `diceCoeff`** — undirected edge Dice vs picause truth
 - **`dice_directed`** — oriented Dice vs truth (`-->` / `o->`)
 - **`oriented_tp` / `oriented_fp` / `oriented_fn`** — directed recovery counts
+- **`oriented_fpr` / `oriented_tpr`** — FPR = `oriented_fp / (n(n-1) - n_true_directed)`;
+  TPR = `oriented_tp / n_true_directed`
+- **`skeleton_fpr` / `skeleton_tpr`** — same idea on the undirected skeleton
+- **`n_nodes` / `n_possible_non_edges`** — FPR denominator pieces
+- **`penalty_discount` / `alpha`** — HP used for that search (scalar or sweep cell)
 - **`dice_vs_full`** — legacy Dice vs the **100% recovered** graph (not truth)
 - **`ESMean` / `ESStd`** — mean/std of |SEM estimates| (only if SEM is on)
 - **`search_ok`** — whether that draw’s search finished
@@ -123,14 +140,18 @@ Written to `discovery_results/resampled_models_fastcausal.csv` (and plots from
   `n_imputed_cells`** — how missingness was realized and handled
 
 `--cmd compute` also prints mean Dice / oriented TP-FP-FN grouped by
-mechanism × rate × strategy (and algorithm, when more than one).
+mechanism × rate × strategy (and algorithm, when more than one). An SA4
+sweep additionally writes `hp_sweep_metrics.csv` (HP × mean FPR/TPR/Dice)
+and `hp_selected_by_target_fpr.csv`, and prints both tables.
 
 `--cmd plot` writes `dice_skeleton_by_proportion.png`,
 `dice_directed_by_proportion.png`, `dice_vs_full_by_proportion.png`, and
 `esmean_by_proportion.png` when SEM columns are present. When the
 missingness grid varies it also writes
 `dice_skeleton_by_missing_rate.png` and
-`dice_directed_by_missing_rate.png`.
+`dice_directed_by_missing_rate.png`. When the HP grid varies it writes
+`oriented_fpr_by_penalty_discount.png` / `dice_directed_by_penalty_discount.png`
+(FGES) and `oriented_fpr_by_alpha.png` / `dice_directed_by_alpha.png` (GFCI).
 
 ### Cost defaults
 
@@ -146,6 +167,18 @@ Meant to be runnable, not a 100-iteration profile:
   `--missingness` or set `missingness.enabled: true`. Combine the full
   proportion list with the missingness grid only if you accept the extra
   cells; SA3 should use `--proportions 1.0`.
+- **HP sweep is off**. `--cmd compute` uses scalar `penalty_discount` /
+  `alpha` until you pass `--hp-sweep` (or a list flag). SA4 should use
+  `--proportions 1.0` and leave missingness off. A fuller profile:
+
+  ```bash
+  python tradsim_fastcausal.py --cmd compute --proportions 1.0 --hp-sweep \
+    --penalty-discounts 0.5,1,2,4,8 --iterations 20 \
+    --output-dir ./discovery_results/sa4_fges
+  python tradsim_fastcausal.py --cmd compute --algorithm gfci --proportions 1.0 \
+    --hp-sweep --alphas 0.001,0.005,0.01,0.05,0.1 \
+    --output-dir ./discovery_results/sa4_gfci
+  ```
 
 GFCI (and occasionally FGES) can fail on a draw (`search_ok=False`, e.g.
 nonpositive precision diagonal). Treat that as a **success rate by cell**:
@@ -224,6 +257,69 @@ python tradsim_fastcausal.py --cmd plot
 `complete_case`, `mar` × `complete_case,mean`, rate `0.2`) so the path
 stays cheap.
 
+## SA4: hyperparameter / target-FPR (`tools/hp_sweep.py`)
+
+With picause ground truth, empirical **oriented FPR** is
+`oriented_fp / (n_nodes*(n_nodes-1) - n_true_directed)` — directed false
+positives over possible directed non-edges. **TPR** is
+`oriented_tp / n_true_directed`. SA4 sweeps the HPs that move FPR and
+picks the setting closest to each requested target.
+
+- **FGES** sweeps `penalty_discount` (SEM-BIC). Larger penalty → fewer
+  edges → typically **lower FPR**. `--alpha` is recorded but unused.
+- **GFCI** sweeps `alpha` (Fisher-Z). Larger alpha → more edges →
+  typically **higher FPR**. `penalty_discount` stays at the scalar default.
+- **`--algorithm both`** runs the FGES penalty grid and the GFCI alpha
+  grid (not a full cross).
+- **Target-FPR selection** (default `0.05,0.10`): for each algorithm ×
+  proportion (and missingness cell, if that grid varies), pick the HP
+  whose **mean** `oriented_fpr` across cases/iterations is closest to the
+  target. Ties go to higher TPR, then higher directed Dice, then the more
+  conservative HP (larger penalty / smaller alpha).
+
+SA4 defaults to **complete data + subsample**. Leave missingness off
+unless you explicitly want that extra cross.
+
+### How to run
+
+```bash
+# FGES penalty grid vs picause truth, p=1.0, targets 0.05 and 0.10
+python tradsim_fastcausal.py --cmd compute --proportions 1.0 --hp-sweep \
+  --output-dir ./discovery_results/sa4_fges
+
+# GFCI alpha grid
+python tradsim_fastcausal.py --cmd compute --algorithm gfci --proportions 1.0 \
+  --hp-sweep --output-dir ./discovery_results/sa4_gfci
+
+# Custom lists (any of these flags also enables the sweep)
+python tradsim_fastcausal.py --cmd compute --proportions 1.0 \
+  --penalty-discounts 1,2,4 --target-fprs 0.05,0.10
+```
+
+`--cmd compute` writes:
+
+- `resampled_models_fastcausal.csv` — one row per draw (includes
+  `penalty_discount`, `alpha`, `oriented_fpr`, `oriented_tpr`)
+- `hp_sweep_metrics.csv` — mean FPR/TPR/Dice per HP cell
+- `hp_selected_by_target_fpr.csv` — selected HP per target FPR
+
+Optional subsample with the same HP grid:
+
+```bash
+python tradsim_fastcausal.py --cmd compute --hp-sweep --proportions 1.0,0.8 \
+  --output-dir ./discovery_results/sa4_subsample
+```
+
+Dry-run (complete data, two penalties; does not stack on the SA3 smoke
+grid):
+
+```bash
+python tradsim_fastcausal.py --cmd smoke --hp-sweep
+```
+
+`config_smoke.yaml` keeps `hp_sweep.enabled: false` with a two-point
+list so `--config config_smoke.yaml --hp-sweep` stays cheap.
+
 ## Off the critical path (legacy Java / fastcda)
 
 These are **not** required for the workflow above:
@@ -243,8 +339,8 @@ commented out.
 - **SA3 leftovers** — cell-wise **MNAR**; **multiple imputation** (MICE);
   **clinical / real-data** missingness. The old
   `tradsim_fges_obj.py --cmd impute` hook remains real-data only.
-- **SA4** — hyperparameter / target-FPR grids. `--penalty-discount` and
-  `--alpha` exist; there is no target-FPR driver.
+- **SA4 leftovers** — clinical / real-data target-FPR calibration (this
+  tree only selects HPs against **simulated** picause truth).
 
 ## Historical notes
 
