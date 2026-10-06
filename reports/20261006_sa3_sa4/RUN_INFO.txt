@@ -1,0 +1,12 @@
+date_ct: 2026-10-06
+repo: https://github.com/kelvinlim/cda_simthesis
+commit: 8f8495bfc08a228ddd558869e8c37f16712ea0aa
+python: 3.12.3
+fastcausal: 0.1.11
+simulation: python simdata.py --cmd sim (config.yaml defaults: 10 iters × 3 effect sizes × 22 vars, n=10000, 27 edges)
+A: python tradsim_fastcausal.py --cmd compute --iterations 20 --output-dir ./discovery_results/baseline_subsample
+B: --proportions 1.0 --missing-mechanisms mcar --missing-rates 0,0.1,0.2,0.4 --missing-strategies complete_case --output-dir ./discovery_results/sa3_mcar
+C: --proportions 1.0 --missing-mechanisms mar --missing-rates 0,0.1,0.2,0.4 --missing-strategies complete_case,mean --output-dir ./discovery_results/sa3_mar
+D: --proportions 1.0 --hp-sweep --penalty-discounts 0.5,1,2,4,8 --target-fprs 0.05,0.10 --output-dir ./discovery_results/sa4_fges
+E: --algorithm gfci --proportions 1.0 --hp-sweep --alphas 0.001,0.005,0.01,0.05,0.1 --target-fprs 0.05,0.10 --output-dir ./discovery_results/sa4_gfci
+profile: full 30-file sim grid; discovery.iterations=20; proportion 1.0 runs once
