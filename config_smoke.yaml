@@ -42,3 +42,15 @@ discovery:
     mcar_impute: false
     mar_covariates: null
     mar_slope: 1.5
+  # Tiny SA4 grid (do not combine with SA3 + a full proportion list).
+  hp_sweep:
+    enabled: false
+    penalty_discounts:
+      - 1.0
+      - 2.0
+    alphas:
+      - 0.01
+      - 0.05
+    target_fprs:
+      - 0.05
+      - 0.10

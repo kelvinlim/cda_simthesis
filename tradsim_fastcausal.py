@@ -3,11 +3,14 @@
 
 Compares recovered graphs to picause ground-truth ``.txt`` files and to the
 100%-sample recovered graph (legacy Dice), across subsample fractions
-100% → 40% and, optionally, a row-missingness grid (MCAR then MAR).
+100% → 40%, optionally a row-missingness grid (MCAR then MAR), and
+optionally an SA4 hyperparameter / target-FPR sweep.
 
 Subsample ``proportion`` and missingness ``rate`` are different axes:
 proportion randomly *keeps* complete rows; MCAR/MAR *blanks* rows that a
-handler then drops or imputes.
+handler then drops or imputes. The HP sweep is a third axis
+(``penalty_discount`` for FGES, ``alpha`` for GFCI) and stays off unless
+requested — SA4 defaults to complete data plus subsample.
 
 This replaces ``tradsim_fges_obj.py`` for the simulation workflow. The older
 Java Tetrad / fastcda path is deprecated and is not required here.
@@ -28,6 +31,16 @@ import yaml
 
 from tools.fastcausal_backend import run_search
 from tools.graph_metrics import compare_graphs, parse_picause_graph, skeleton_pairs
+from tools.hp_sweep import (
+    DEFAULT_ALPHAS,
+    DEFAULT_PENALTY_DISCOUNTS,
+    DEFAULT_TARGET_FPRS,
+    expand_hp_cells,
+    parse_target_fprs,
+    select_hp_for_target_fprs,
+    summarize_hp_metrics,
+    unique_floats,
+)
 from tools.missingness import (
     apply_missingness,
     expand_missingness_grid,
@@ -37,7 +50,7 @@ from tools.missingness import (
     parse_str_list,
 )
 
-__version_info__ = ("0", "3", "0")
+__version_info__ = ("0", "4", "0")
 __version__ = ".".join(__version_info__)
 
 DEFAULT_PROPORTIONS = [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
@@ -179,16 +192,14 @@ class TradSimFastcausal:
         return bool(self.discovery.get("run_sem", False))
 
     def _alpha(self) -> float:
-        return float(
-            self.config.get("alpha")
-            or self.discovery.get("alpha", 0.01)
-        )
+        if self.config.get("alpha") is not None:
+            return float(self.config["alpha"])
+        return float(self.discovery.get("alpha", 0.01))
 
     def _penalty(self) -> float:
-        return float(
-            self.config.get("penalty_discount")
-            or self.discovery.get("penalty_discount", 1.0)
-        )
+        if self.config.get("penalty_discount") is not None:
+            return float(self.config["penalty_discount"])
+        return float(self.discovery.get("penalty_discount", 1.0))
 
     def _seed(self) -> int:
         return int(self.config.get("seed") or self.discovery.get("seed", 2025))
@@ -250,6 +261,54 @@ class TradSimFastcausal:
             return float(self.config["mar_slope"])
         return float(yaml_m.get("mar_slope", 1.5))
 
+    def _hp_sweep_yaml(self) -> dict:
+        raw = self.discovery.get("hp_sweep") or {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _hp_sweep_enabled(self) -> bool:
+        if self.config.get("hp_sweep") is not None:
+            return bool(self.config["hp_sweep"])
+        if any(
+            self.config.get(key) is not None
+            for key in ("penalty_discounts", "alphas", "target_fprs")
+        ):
+            return True
+        return bool(self._hp_sweep_yaml().get("enabled", False))
+
+    def _penalty_discounts(self) -> list[float]:
+        yaml_h = self._hp_sweep_yaml()
+        raw = self.config.get("penalty_discounts")
+        if raw is None:
+            raw = yaml_h.get("penalty_discounts", DEFAULT_PENALTY_DISCOUNTS)
+        values = unique_floats(parse_float_list(raw, DEFAULT_PENALTY_DISCOUNTS))
+        return values or [self._penalty()]
+
+    def _alphas(self) -> list[float]:
+        yaml_h = self._hp_sweep_yaml()
+        raw = self.config.get("alphas")
+        if raw is None:
+            raw = yaml_h.get("alphas", DEFAULT_ALPHAS)
+        values = unique_floats(parse_float_list(raw, DEFAULT_ALPHAS))
+        return values or [self._alpha()]
+
+    def _target_fprs(self) -> list[float]:
+        yaml_h = self._hp_sweep_yaml()
+        raw = self.config.get("target_fprs")
+        if raw is None:
+            raw = yaml_h.get("target_fprs", DEFAULT_TARGET_FPRS)
+        values = parse_target_fprs(raw, DEFAULT_TARGET_FPRS)
+        return values or list(DEFAULT_TARGET_FPRS)
+
+    def _hp_cells(self, algorithm: str) -> list[tuple[float, float]]:
+        return expand_hp_cells(
+            algorithm,
+            self._penalty_discounts(),
+            self._alphas(),
+            enabled=self._hp_sweep_enabled(),
+            scalar_penalty=self._penalty(),
+            scalar_alpha=self._alpha(),
+        )
+
     def compute(self) -> pd.DataFrame:
         data_dir = self._data_dir()
         csvs = discover_sim_csvs(data_dir, self.config.get("glob", "*.csv"))
@@ -292,6 +351,8 @@ class TradSimFastcausal:
             print(f"Wrote {out} ({len(summary)} rows)")
             self._print_search_success(summary)
             self._print_missingness_metrics(summary)
+            self._print_hp_metrics(summary)
+        self._write_hp_summaries(summary)
         return summary
 
     def _print_search_success(self, summary: pd.DataFrame) -> None:
@@ -304,6 +365,8 @@ class TradSimFastcausal:
                 "algorithm",
                 "proportion",
                 "es",
+                "penalty_discount",
+                "alpha",
                 "missing_mechanism",
                 "missing_rate",
                 "missing_strategy",
@@ -318,7 +381,7 @@ class TradSimFastcausal:
         )
         print(
             "Search success rate by cell "
-            "(algorithm × proportion × es × missingness):"
+            "(algorithm × proportion × es × HP × missingness):"
         )
         print(rates.to_string(index=False))
 
@@ -360,6 +423,35 @@ class TradSimFastcausal:
         print("Discovery vs simulated truth by missingness cell:")
         print(table.to_string(index=False))
 
+    def _print_hp_metrics(self, summary: pd.DataFrame) -> None:
+        """Mean FPR / recovery by HP cell, plus selected HP per target FPR."""
+        if not self._hp_sweep_enabled() or summary.empty:
+            return
+        metrics = summarize_hp_metrics(summary)
+        if metrics.empty:
+            return
+        print("Discovery vs simulated truth by hyperparameter cell:")
+        print(metrics.to_string(index=False))
+        selected = select_hp_for_target_fprs(metrics, self._target_fprs())
+        if selected.empty:
+            return
+        print("Selected HP per target FPR (closest empirical oriented_fpr):")
+        print(selected.to_string(index=False))
+
+    def _write_hp_summaries(self, summary: pd.DataFrame) -> None:
+        if not self._hp_sweep_enabled() or summary.empty:
+            return
+        out_dir = self._output_dir()
+        metrics = summarize_hp_metrics(summary)
+        metrics_path = out_dir / "hp_sweep_metrics.csv"
+        metrics.to_csv(metrics_path, index=False)
+        selected = select_hp_for_target_fprs(metrics, self._target_fprs())
+        selected_path = out_dir / "hp_selected_by_target_fpr.csv"
+        selected.to_csv(selected_path, index=False)
+        if self.verbose:
+            print(f"Wrote {metrics_path} ({len(metrics)} rows)")
+            print(f"Wrote {selected_path} ({len(selected)} rows)")
+
     def _run_proportions(
         self,
         df: pd.DataFrame,
@@ -368,11 +460,13 @@ class TradSimFastcausal:
         algorithm: str,
     ) -> list[dict]:
         rows: list[dict] = []
-        full_edges: list[str] | None = None
+        full_edges_by_hp: dict[tuple, list[str]] = {}
         knowledge = bool(self.config.get("knowledge", False))
         run_sem = self._run_sem()
         missing_draws = group_missingness_draws(self._missingness_cells())
+        hp_cells = self._hp_cells(algorithm)
         base_seed = self._seed()
+        n_nodes = int(df.select_dtypes(include=[np.number]).shape[1])
 
         for proportion in self._proportions():
             n_iter = iterations_for_proportion(proportion, self._iterations())
@@ -408,81 +502,107 @@ class TradSimFastcausal:
                         corrupted, miss_info = sampled, {}
                         apply_error = str(exc)
                     for strategy in strategies:
-                        if self.verbose > 1:
-                            print(
-                                f"  {meta['case']} {algorithm} p={proportion} "
-                                f"iter={iteration + 1}/{n_iter} "
-                                f"{mechanism}@{miss_rate} {strategy}"
+                        for penalty, alpha in hp_cells:
+                            if self.verbose > 1:
+                                print(
+                                    f"  {meta['case']} {algorithm} p={proportion} "
+                                    f"iter={iteration + 1}/{n_iter} "
+                                    f"{mechanism}@{miss_rate} {strategy} "
+                                    f"penalty={penalty} alpha={alpha}"
+                                )
+                            base = {
+                                "case": meta["case"],
+                                "subject": meta["subject"],
+                                "es": meta["es"],
+                                "algorithm": algorithm,
+                                "proportion": proportion,
+                                "iteration": iteration,
+                                "n_rows_sampled": len(sampled),
+                                "n_true_edges": len(skeleton_pairs(true_edges)),
+                                "n_nodes": n_nodes,
+                                "missing_mechanism": mechanism,
+                                "missing_rate": miss_rate,
+                                "missing_strategy": strategy,
+                                "penalty_discount": penalty,
+                                "alpha": alpha,
+                            }
+                            if apply_error is not None:
+                                rows.append(
+                                    {
+                                        **base,
+                                        "search_ok": False,
+                                        "error": apply_error,
+                                        "n_rows": 0,
+                                        "n_missing_rows": None,
+                                        "missing_rate_empirical": None,
+                                        "n_rows_dropped": None,
+                                        "n_imputed_cells": None,
+                                    }
+                                )
+                                continue
+                            row = self._evaluate_draw(
+                                corrupted=corrupted,
+                                miss_info=miss_info,
+                                algorithm=algorithm,
+                                proportion=proportion,
+                                mechanism=mechanism,
+                                miss_rate=miss_rate,
+                                strategy=strategy,
+                                knowledge=knowledge,
+                                run_sem=run_sem,
+                                penalty_discount=penalty,
+                                alpha=alpha,
                             )
-                        base = {
-                            "case": meta["case"],
-                            "subject": meta["subject"],
-                            "es": meta["es"],
-                            "algorithm": algorithm,
-                            "proportion": proportion,
-                            "iteration": iteration,
-                            "n_rows_sampled": len(sampled),
-                            "n_true_edges": len(skeleton_pairs(true_edges)),
-                            "missing_mechanism": mechanism,
-                            "missing_rate": miss_rate,
-                            "missing_strategy": strategy,
-                        }
-                        if apply_error is not None:
-                            rows.append(
-                                {
-                                    **base,
-                                    "search_ok": False,
-                                    "error": apply_error,
-                                    "n_rows": 0,
-                                    "n_missing_rows": None,
-                                    "missing_rate_empirical": None,
-                                    "n_rows_dropped": None,
-                                    "n_imputed_cells": None,
-                                }
+                            recovered = row.pop("_recovered_edges", None)
+                            hp_key = (
+                                penalty,
+                                alpha,
+                                mechanism,
+                                miss_rate,
+                                strategy,
                             )
-                            continue
-                        row = self._evaluate_draw(
-                            corrupted=corrupted,
-                            miss_info=miss_info,
-                            algorithm=algorithm,
-                            proportion=proportion,
-                            mechanism=mechanism,
-                            miss_rate=miss_rate,
-                            strategy=strategy,
-                            knowledge=knowledge,
-                            run_sem=run_sem,
-                        )
-                        recovered = row.pop("_recovered_edges", None)
-                        if (
-                            recovered is not None
-                            and proportion == 1.0
-                            and miss_rate == 0.0
-                            and full_edges is None
-                        ):
-                            full_edges = list(recovered)
-                        if recovered is not None and row.get("search_ok"):
-                            metrics = compare_graphs(
-                                true_edges,
-                                recovered,
-                                full_sample_edges=full_edges,
-                            )
-                            row.update(
-                                {
-                                    "n_recovered_edges": metrics["n_recovered_edges"],
-                                    "n_recovered_directed": metrics[
-                                        "n_recovered_directed"
-                                    ],
-                                    "diceCoeff": metrics["dice_skeleton"],
-                                    "dice_skeleton": metrics["dice_skeleton"],
-                                    "dice_directed": metrics["dice_directed"],
-                                    "diceCoeffNodes": metrics["dice_nodes"],
-                                    "dice_vs_full": metrics["dice_vs_full_skeleton"],
-                                    "oriented_tp": metrics["oriented_tp"],
-                                    "oriented_fp": metrics["oriented_fp"],
-                                    "oriented_fn": metrics["oriented_fn"],
-                                }
-                            )
-                        rows.append({**base, **row})
+                            if (
+                                recovered is not None
+                                and proportion == 1.0
+                                and miss_rate == 0.0
+                                and hp_key not in full_edges_by_hp
+                            ):
+                                full_edges_by_hp[hp_key] = list(recovered)
+                            if recovered is not None and row.get("search_ok"):
+                                metrics = compare_graphs(
+                                    true_edges,
+                                    recovered,
+                                    full_sample_edges=full_edges_by_hp.get(hp_key),
+                                    n_nodes=n_nodes,
+                                )
+                                row.update(
+                                    {
+                                        "n_recovered_edges": metrics[
+                                            "n_recovered_edges"
+                                        ],
+                                        "n_recovered_directed": metrics[
+                                            "n_recovered_directed"
+                                        ],
+                                        "diceCoeff": metrics["dice_skeleton"],
+                                        "dice_skeleton": metrics["dice_skeleton"],
+                                        "dice_directed": metrics["dice_directed"],
+                                        "diceCoeffNodes": metrics["dice_nodes"],
+                                        "dice_vs_full": metrics[
+                                            "dice_vs_full_skeleton"
+                                        ],
+                                        "oriented_tp": metrics["oriented_tp"],
+                                        "oriented_fp": metrics["oriented_fp"],
+                                        "oriented_fn": metrics["oriented_fn"],
+                                        "n_possible_non_edges": metrics[
+                                            "n_possible_non_edges"
+                                        ],
+                                        "oriented_tpr": metrics["oriented_tpr"],
+                                        "oriented_fpr": metrics["oriented_fpr"],
+                                        "skeleton_tpr": metrics["skeleton_tpr"],
+                                        "skeleton_fpr": metrics["skeleton_fpr"],
+                                    }
+                                )
+                            rows.append({**base, **row})
         return rows
 
     def _evaluate_draw(
@@ -496,6 +616,8 @@ class TradSimFastcausal:
         strategy: str,
         knowledge: bool,
         run_sem: bool,
+        penalty_discount: float | None = None,
+        alpha: float | None = None,
     ) -> dict:
         """Handle one missingness draw, then run discovery."""
         try:
@@ -529,12 +651,18 @@ class TradSimFastcausal:
             }
 
         resampled = standardize_df(handled)
+        penalty = (
+            float(penalty_discount)
+            if penalty_discount is not None
+            else self._penalty()
+        )
+        alpha_value = float(alpha) if alpha is not None else self._alpha()
         try:
             result = run_search(
                 resampled,
                 algorithm=algorithm,
-                alpha=self._alpha(),
-                penalty_discount=self._penalty(),
+                alpha=alpha_value,
+                penalty_discount=penalty,
                 knowledge=knowledge,
                 run_sem=run_sem,
                 verbose=max(self.verbose - 2, 0),
@@ -542,7 +670,8 @@ class TradSimFastcausal:
         except Exception as exc:
             print(
                 f"Warning: {algorithm} failed at p={proportion} "
-                f"{mechanism}@{miss_rate} {strategy}: {exc}"
+                f"{mechanism}@{miss_rate} {strategy} "
+                f"penalty={penalty} alpha={alpha_value}: {exc}"
             )
             return {**extras, "search_ok": False, "error": str(exc)}
 
@@ -582,6 +711,21 @@ class TradSimFastcausal:
             if not complete.empty:
                 subsample = complete
 
+        prop_data = subsample
+        if (
+            "penalty_discount" in subsample.columns
+            and subsample["penalty_discount"].nunique() > 1
+        ):
+            matched = subsample[subsample["penalty_discount"] == self._penalty()]
+            if "alpha" in matched.columns and matched["alpha"].nunique() > 1:
+                matched = matched[matched["alpha"] == self._alpha()]
+            if not matched.empty:
+                prop_data = matched
+        elif "alpha" in subsample.columns and subsample["alpha"].nunique() > 1:
+            matched = subsample[subsample["alpha"] == self._alpha()]
+            if not matched.empty:
+                prop_data = matched
+
         def _box(data, x, y, filename, title, hue_col=None):
             plt.figure(figsize=(10, 6))
             plot_hue = hue_col if hue_col is not None else (extra_hue or hue)
@@ -601,30 +745,30 @@ class TradSimFastcausal:
                 print(f"Wrote {path}")
 
         _box(
-            subsample,
+            prop_data,
             "proportion",
             "dice_skeleton",
             "dice_skeleton_by_proportion.png",
             "Skeleton Dice vs ground truth by subsample proportion",
         )
         _box(
-            subsample,
+            prop_data,
             "proportion",
             "dice_directed",
             "dice_directed_by_proportion.png",
             "Directed Dice vs ground truth by subsample proportion",
         )
-        if subsample["dice_vs_full"].notna().any():
+        if prop_data["dice_vs_full"].notna().any():
             _box(
-                subsample,
+                prop_data,
                 "proportion",
                 "dice_vs_full",
                 "dice_vs_full_by_proportion.png",
                 "Skeleton Dice vs 100% recovered graph by subsample proportion",
             )
-        if subsample["ESMean"].notna().any():
+        if prop_data["ESMean"].notna().any():
             _box(
-                subsample,
+                prop_data,
                 "proportion",
                 "ESMean",
                 "esmean_by_proportion.png",
@@ -657,6 +801,45 @@ class TradSimFastcausal:
                 "dice_directed_by_missing_rate.png",
                 "Directed Dice vs ground truth by row-missingness rate",
                 hue_col="missing_cell",
+            )
+
+        if (
+            "penalty_discount" in subsample.columns
+            and subsample["penalty_discount"].nunique() > 1
+            and "oriented_fpr" in subsample.columns
+        ):
+            _box(
+                subsample,
+                "penalty_discount",
+                "oriented_fpr",
+                "oriented_fpr_by_penalty_discount.png",
+                "Oriented FPR vs ground truth by FGES penalty_discount",
+            )
+            _box(
+                subsample,
+                "penalty_discount",
+                "dice_directed",
+                "dice_directed_by_penalty_discount.png",
+                "Directed Dice vs ground truth by FGES penalty_discount",
+            )
+        if (
+            "alpha" in subsample.columns
+            and subsample["alpha"].nunique() > 1
+            and "oriented_fpr" in subsample.columns
+        ):
+            _box(
+                subsample,
+                "alpha",
+                "oriented_fpr",
+                "oriented_fpr_by_alpha.png",
+                "Oriented FPR vs ground truth by GFCI alpha",
+            )
+            _box(
+                subsample,
+                "alpha",
+                "dice_directed",
+                "dice_directed_by_alpha.png",
+                "Directed Dice vs ground truth by GFCI alpha",
             )
 
     def smoke(self) -> pd.DataFrame:
@@ -692,6 +875,32 @@ class TradSimFastcausal:
             self.config["run_sem"] = False
         self.config["output_dir"] = str(out_dir)
         self.config["glob"] = "sub-*.csv"
+        hp_requested = self.config.get("hp_sweep") is True or any(
+            self.config.get(key) is not None
+            for key in ("penalty_discounts", "alphas", "target_fprs")
+        )
+        if hp_requested:
+            self.config["hp_sweep"] = True
+            self.config["penalty_discounts"] = (
+                self.config.get("penalty_discounts") or "1.0,2.0"
+            )
+            self.config["target_fprs"] = (
+                self.config.get("target_fprs") or "0.05,0.10"
+            )
+            algo = str(self.config.get("algorithm") or "fges").lower()
+            if algo in ("gfci", "both", "all"):
+                self.config["alphas"] = self.config.get("alphas") or "0.01,0.05"
+            # SA4 default is complete data + subsample; do not stack SA3
+            # unless the caller also asked for missingness.
+            if self.config.get("missingness") is None and not any(
+                self.config.get(key) is not None
+                for key in (
+                    "missing_mechanisms",
+                    "missing_rates",
+                    "missing_strategies",
+                )
+            ):
+                self.config["missingness"] = False
         # Tiny SA3 grid unless the caller explicitly disabled missingness.
         if self.config.get("missingness") is not False:
             self.config["missingness"] = True
@@ -715,6 +924,9 @@ class TradSimFastcausal:
             "missing_rate",
             "missing_strategy",
             "oriented_tp",
+            "oriented_fpr",
+            "penalty_discount",
+            "alpha",
         }
         missing = required - set(summary.columns)
         if missing:
@@ -734,8 +946,10 @@ def build_parser() -> argparse.ArgumentParser:
           python simdata.py --cmd sim
           python tradsim_fastcausal.py --cmd compute
           python tradsim_fastcausal.py --cmd compute --proportions 1.0 --missingness
+          python tradsim_fastcausal.py --cmd compute --proportions 1.0 --hp-sweep
           python tradsim_fastcausal.py --cmd plot
           python tradsim_fastcausal.py --cmd smoke
+          python tradsim_fastcausal.py --cmd smoke --hp-sweep
         """
     )
     parser = argparse.ArgumentParser(
@@ -769,6 +983,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--alpha", type=float, default=None)
     parser.add_argument("--penalty-discount", dest="penalty_discount", type=float, default=None)
+    parser.add_argument(
+        "--hp-sweep",
+        dest="hp_sweep",
+        action="store_true",
+        default=None,
+        help="enable the discovery.hp_sweep grid (FGES penalty / GFCI alpha)",
+    )
+    parser.add_argument(
+        "--no-hp-sweep",
+        dest="hp_sweep",
+        action="store_false",
+        help="disable hyperparameter sweep (scalar penalty_discount / alpha)",
+    )
+    parser.add_argument(
+        "--penalty-discounts",
+        dest="penalty_discounts",
+        default=None,
+        help="comma-separated FGES SEM-BIC penalties, e.g. 1,2,4 (enables hp-sweep)",
+    )
+    parser.add_argument(
+        "--alphas",
+        dest="alphas",
+        default=None,
+        help="comma-separated GFCI Fisher-Z alphas, e.g. 0.01,0.05 (enables hp-sweep)",
+    )
+    parser.add_argument(
+        "--target-fprs",
+        dest="target_fprs",
+        default=None,
+        help="comma-separated target FPRs, e.g. 0.05,0.10 (enables hp-sweep)",
+    )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--glob", default="*.csv")
     parser.add_argument(
@@ -839,6 +1084,10 @@ def main(argv: list[str] | None = None) -> int:
         proportions=args.proportions,
         alpha=args.alpha,
         penalty_discount=args.penalty_discount,
+        hp_sweep=args.hp_sweep,
+        penalty_discounts=args.penalty_discounts,
+        alphas=args.alphas,
+        target_fprs=args.target_fprs,
         seed=args.seed,
         glob=args.glob,
         knowledge=args.knowledge,

@@ -146,6 +146,68 @@ def format_tetrad_graph_text(edges: Iterable[str]) -> str:
     return "\n".join(lines)
 
 
+def possible_directed_non_edges(n_nodes: int, n_true_directed: int) -> int:
+    """Directed pairs that are *not* true DAG edges: ``n(n-1) - n_true``.
+
+    Used as the FPR denominator (oriented FP vs possible non-edges).
+    """
+    total = int(n_nodes) * max(int(n_nodes) - 1, 0)
+    return max(total - int(n_true_directed), 0)
+
+
+def possible_skeleton_non_edges(n_nodes: int, n_true_skeleton: int) -> int:
+    """Undirected pairs that are not true skeleton edges."""
+    total = int(n_nodes) * max(int(n_nodes) - 1, 0) // 2
+    return max(total - int(n_true_skeleton), 0)
+
+
+def _safe_rate(numer: float, denom: float) -> float:
+    if denom <= 0:
+        return 0.0
+    return float(numer) / float(denom)
+
+
+def oriented_rates(
+    oriented_tp: int,
+    oriented_fp: int,
+    n_nodes: int,
+    n_true_directed: int,
+) -> dict[str, float | int]:
+    """TPR / FPR from oriented counts vs a known DAG.
+
+    * **TPR** = ``oriented_tp / n_true_directed``
+    * **FPR** = ``oriented_fp / (n(n-1) - n_true_directed)``
+
+    Reversed true edges count as FP (and FN) in ``oriented_counts``; the
+    reverse of a DAG edge *is* a directed non-edge, so it belongs in the
+    FPR numerator.
+    """
+    n_neg = possible_directed_non_edges(n_nodes, n_true_directed)
+    return {
+        "n_nodes": int(n_nodes),
+        "n_possible_non_edges": n_neg,
+        "oriented_tpr": _safe_rate(oriented_tp, n_true_directed),
+        "oriented_fpr": _safe_rate(oriented_fp, n_neg),
+    }
+
+
+def skeleton_rates(
+    true_skel: set,
+    rec_skel: set,
+    n_nodes: int,
+) -> dict[str, float | int]:
+    """Undirected TPR / FPR vs the true skeleton (related recovery metric)."""
+    tp = len(true_skel & rec_skel)
+    fp = len(rec_skel - true_skel)
+    n_true = len(true_skel)
+    n_neg = possible_skeleton_non_edges(n_nodes, n_true)
+    return {
+        "skeleton_tpr": _safe_rate(tp, n_true),
+        "skeleton_fpr": _safe_rate(fp, n_neg),
+        "n_possible_skeleton_non_edges": n_neg,
+    }
+
+
 def oriented_counts(true_edges: Iterable[str], recovered_edges: Iterable[str]) -> dict[str, int]:
     """Oriented TP / FP / FN against a directed ground-truth DAG.
 
@@ -191,8 +253,14 @@ def compare_graphs(
     true_edges: Iterable[str],
     recovered_edges: Iterable[str],
     full_sample_edges: Optional[Iterable[str]] = None,
+    n_nodes: Optional[int] = None,
 ) -> dict:
-    """Dice and oriented metrics vs ground truth (and optionally vs 100% sample)."""
+    """Dice and oriented metrics vs ground truth (and optionally vs 100% sample).
+
+    ``n_nodes`` is the SEM variable count (dataframe columns). If omitted it
+    is inferred from endpoints that appear in either edge list (isolated
+    nodes would then be missing, which understates the FPR denominator).
+    """
     true_list = parse_edge_strings(true_edges)
     rec_list = parse_edge_strings(recovered_edges)
     true_skel = skeleton_pairs(true_list)
@@ -200,6 +268,15 @@ def compare_graphs(
     true_dir = directed_pairs(true_list)
     rec_dir = directed_pairs(rec_list)
     oriented = oriented_counts(true_list, rec_list)
+    inferred_nodes = node_set(true_list) | node_set(rec_list)
+    nodes = int(n_nodes) if n_nodes is not None else len(inferred_nodes)
+    rates = oriented_rates(
+        oriented["oriented_tp"],
+        oriented["oriented_fp"],
+        nodes,
+        len(true_dir),
+    )
+    skel_rates = skeleton_rates(true_skel, rec_skel, nodes)
 
     result = {
         "n_true_edges": len(true_skel),
@@ -210,6 +287,8 @@ def compare_graphs(
         "dice_directed": dice_coefficient(true_dir, rec_dir),
         "dice_nodes": dice_coefficient(node_set(true_list), node_set(rec_list)),
         **oriented,
+        **rates,
+        **skel_rates,
     }
 
     if full_sample_edges is not None:

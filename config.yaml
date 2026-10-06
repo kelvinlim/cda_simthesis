@@ -60,5 +60,22 @@ discovery:
     # null = first numeric column (picause x_1).
     mar_covariates: null
     mar_slope: 1.5
-
+  # SA4 hyperparameter / target-FPR sweep. Off by default so `--cmd compute`
+  # stays a scalar-HP subsample run. Enable with --hp-sweep or
+  # hp_sweep.enabled: true; prefer --proportions 1.0. Missingness stays off
+  # unless also requested.
+  hp_sweep:
+    enabled: false
+    # FGES SEM-BIC penalty. Larger → fewer edges → typically lower FPR.
+    penalty_discounts:
+      - 1.0
+      - 2.0
+      - 4.0
+    # GFCI Fisher-Z alpha. Larger → more edges → typically higher FPR.
+    alphas:
+      - 0.01
+      - 0.05
+    target_fprs:
+      - 0.05
+      - 0.10
 

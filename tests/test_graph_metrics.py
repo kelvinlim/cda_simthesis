@@ -6,8 +6,10 @@ from tools.graph_metrics import (
     compare_graphs,
     dice_coefficient,
     directed_pairs,
+    oriented_rates,
     parse_graph_text,
     parse_picause_graph,
+    possible_directed_non_edges,
     skeleton_pairs,
 )
 
@@ -85,6 +87,10 @@ def test_compare_perfect_recovery():
     assert metrics["oriented_tp"] == 2
     assert metrics["oriented_fp"] == 0
     assert metrics["oriented_fn"] == 0
+    assert metrics["oriented_tpr"] == 1.0
+    assert metrics["oriented_fpr"] == 0.0
+    assert metrics["n_nodes"] == 3
+    assert metrics["n_possible_non_edges"] == 3 * 2 - 2
 
 
 def test_compare_reversed_and_missing():
@@ -95,3 +101,21 @@ def test_compare_reversed_and_missing():
     assert metrics["oriented_fn"] == 2
     assert metrics["dice_vs_full_skeleton"] == metrics["dice_skeleton"]
     assert 0.0 <= metrics["dice_skeleton"] <= 1.0
+
+
+def test_oriented_fpr_uses_possible_directed_non_edges():
+    """FPR = oriented_fp / (n(n-1) - n_true_directed), including isolated nodes."""
+    true = ["x_1 --> x_2", "x_2 --> x_3"]
+    recovered = ["x_2 --> x_1", "x_3 --> x_4"]
+    metrics = compare_graphs(true, recovered, n_nodes=5)
+    # 5 nodes → 20 directed pairs; 2 true edges → 18 non-edges.
+    assert possible_directed_non_edges(5, 2) == 18
+    # reverse of x_1-->x_2 plus novel x_3-->x_4
+    assert metrics["oriented_fp"] == 2
+    assert metrics["oriented_fpr"] == 2 / 18
+    assert metrics["oriented_tpr"] == 0.0
+    assert metrics["n_nodes"] == 5
+    rates = oriented_rates(oriented_tp=2, oriented_fp=0, n_nodes=4, n_true_directed=2)
+    assert rates["oriented_tpr"] == 1.0
+    assert rates["oriented_fpr"] == 0.0
+    assert rates["n_possible_non_edges"] == 4 * 3 - 2
