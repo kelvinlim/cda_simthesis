@@ -274,8 +274,10 @@ picks the setting closest to each requested target.
 - **Target-FPR selection** (default `0.05,0.10`): for each algorithm ×
   proportion (and missingness cell, if that grid varies), pick the HP
   whose **mean** `oriented_fpr` across cases/iterations is closest to the
-  target. Ties go to higher TPR, then higher directed Dice, then the more
-  conservative HP (larger penalty / smaller alpha).
+  target. That is absolute closest `|empirical_fpr − target|` (the winner
+  may exceed the target; e.g. `0.06` beats `0.01` for target `0.05`), not
+  “FPR ≤ target then max TPR.” Ties go to higher TPR, then higher directed
+  Dice, then the more conservative HP (larger penalty / smaller alpha).
 
 SA4 defaults to **complete data + subsample**. Leave missingness off
 unless you explicitly want that extra cross.
