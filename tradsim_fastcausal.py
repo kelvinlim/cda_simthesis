@@ -149,8 +149,11 @@ class TradSimFastcausal:
         yaml_cfg = {}
         if self.config.get("config"):
             yaml_cfg = load_yaml_config(self.config["config"])
+        self.yaml_cfg = yaml_cfg
         self.simulation = yaml_cfg.get("simulation", {})
         self.discovery = yaml_cfg.get("discovery", {})
+        smoke_cfg = yaml_cfg.get("smoke") or {}
+        self.smoke_cfg = smoke_cfg if isinstance(smoke_cfg, dict) else {}
         self.verbose = int(self.config.get("verbose", 1))
 
     def _algorithm_list(self) -> list[str]:
@@ -842,10 +845,28 @@ class TradSimFastcausal:
                 "Directed Dice vs ground truth by GFCI alpha",
             )
 
+    def _smoke_spec(self) -> dict:
+        """Cheap SEM size for ``--cmd smoke``.
+
+        Default remains 8 variables so ``config.yaml`` dry-runs stay tiny.
+        ``config_boston10_smoke.yaml`` sets ``smoke.num_variables: 10``.
+        """
+        cfg = self.smoke_cfg
+        return {
+            "num_variables": int(cfg.get("num_variables", 8)),
+            "num_edges": int(cfg.get("num_edges", 8)),
+            "num_samples": int(cfg.get("num_samples", 80)),
+            "effect_size": float(cfg.get("effect_size", 0.25)),
+        }
+
     def smoke(self) -> pd.DataFrame:
         """Tiny end-to-end dry-run: generate one SEM, recover FGES, write CSV."""
         from picause import StructuralEquationDagModel
 
+        spec = self._smoke_spec()
+        num_var = spec["num_variables"]
+        num_edges = spec["num_edges"]
+        effect_size = spec["effect_size"]
         out_dir = self._output_dir() / "smoke"
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -853,7 +874,10 @@ class TradSimFastcausal:
         count = 0
         while True:
             sem = StructuralEquationDagModel(
-                num_var=8, num_edges=8, seed=seed, beta=0.5
+                num_var=num_var,
+                num_edges=num_edges,
+                seed=seed,
+                beta=effect_size ** 0.5,
             )
             count += 1
             if not sem.test_residual_overflow():
@@ -861,8 +885,10 @@ class TradSimFastcausal:
             if count > 50:
                 raise RuntimeError("smoke SEM: residual overflow after 50 draws")
             seed += 1
-        df = sem.generate_data(80)
-        csv_path = out_dir / "sub-001_vars-8_edges-8_es-0.25.csv"
+        df = sem.generate_data(spec["num_samples"])
+        csv_path = out_dir / (
+            f"sub-001_vars-{num_var}_edges-{num_edges}_es-{effect_size}.csv"
+        )
         txt_path = csv_path.with_suffix(".txt")
         df.to_csv(csv_path, index=False)
         txt_path.write_text(str(sem) + "\nIterations: 1\n", encoding="utf-8")

@@ -49,6 +49,31 @@ def test_smoke_fges(tmp_path):
     assert len(summary[summary["proportion"] == 0.8]) == 9
 
 
+def test_smoke_fges_boston10(tmp_path):
+    runner = TradSimFastcausal(
+        config="config_boston10_smoke.yaml",
+        output_dir=str(tmp_path),
+        iterations=2,
+        proportions="1.0,0.8",
+        algorithm="fges",
+        run_sem=False,
+        missingness=False,
+        verbose=1,
+        seed=7,
+    )
+    summary = runner.smoke()
+    assert not summary.empty
+    assert (summary["n_nodes"] == 10).all()
+    assert "vars-10_" in str(summary["case"].iloc[0])
+    assert summary["es"].iloc[0] == 0.25
+    ok = summary[summary["search_ok"] != False]
+    assert not ok.empty
+    assert ok["dice_skeleton"].between(0.0, 1.0).all()
+    assert set(summary["missing_mechanism"]) == {"none"}
+    assert len(summary[summary["proportion"] == 1.0]) == 1
+    assert len(summary[summary["proportion"] == 0.8]) == 2
+
+
 def test_smoke_fges_subsample_only(tmp_path):
     runner = TradSimFastcausal(
         config="config.yaml",

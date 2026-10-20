@@ -1,0 +1,34 @@
+Notices for third-party data referenced by this repository.
+
+cda_simthesis does **not** vendor Boston or MyConnectome CSVs. Boston Set A
+fixtures are downloaded on demand from the public
+[causal-open-data](https://github.com/kelvinlim/causal-open-data) repository
+at a pinned commit (see `scripts/boston_fixtures_pin.json` and
+`scripts/fetch_boston_fixtures.py`).
+
+No Human Connectome Project (HCP) participant data, no other restricted
+participant-level data, and no Jang panic-EMA files are stored here.
+
+## Boston College COVID-19 Sleep and Well-Being Dataset
+
+License: Creative Commons Attribution 4.0 International (CC-BY 4.0)
+  https://creativecommons.org/licenses/by/4.0/
+
+Source: OSF project gpxwa, “Most Recent Data - Released 5.10.2022
+(Recommended)”.
+  https://osf.io/gpxwa
+  doi:10.17605/OSF.IO/GPXWA
+
+Citation:
+  Cunningham, T. J., Fields, E. C., & Kensinger, E. A. (2021).
+  Boston College daily sleep and well-being survey data during early
+  phase of the COVID-19 pandemic. Scientific Data, 8, 110.
+  https://doi.org/10.1038/s41597-021-00886-y
+
+Pinned public derivatives (Set A, 10 variables; short + full surveys):
+  https://github.com/kelvinlim/causal-open-data
+  commit 8d7c7553d7f54e1cb6497fcbbc6fa2d77f7d29d4
+
+Consumers who redistribute those Boston derivatives must retain the CC-BY 4.0
+attribution above. Checksums for the paths this repo fetches live in
+`scripts/boston_fixtures_pin.json` and in causal-open-data `SHA256SUMS`.

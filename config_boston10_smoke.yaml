@@ -1,0 +1,61 @@
+# Tiny 10-variable grid for dry-runs (not thesis results).
+#   python simdata.py --config config_boston10_smoke.yaml --cmd sim
+#   python tradsim_fastcausal.py --config config_boston10_smoke.yaml --cmd compute
+#   python tradsim_fastcausal.py --config config_boston10_smoke.yaml --cmd smoke
+
+general:
+  version: 1.0.0
+
+simulation:
+  num_samples:
+    - 80
+  effect_sizes:
+    - 0.25
+  num_variables: 10
+  num_edges: 10
+  seed: 43
+  data_directory: ./sim_data_boston10_smoke
+  iterations: 1
+
+# Used by tradsim_fastcausal.py --cmd smoke (defaults stay 8-var without this block).
+smoke:
+  num_variables: 10
+  num_edges: 10
+  num_samples: 80
+  effect_size: 0.25
+
+discovery:
+  algorithm: fges
+  alpha: 0.01
+  penalty_discount: 1.0
+  proportions:
+    - 1.0
+    - 0.8
+  iterations: 2
+  output_directory: ./discovery_results/boston10_smoke
+  run_sem: false
+  seed: 2025
+  missingness:
+    enabled: true
+    mechanisms:
+      - mcar
+      - mar
+    rates:
+      - 0.2
+    strategies:
+      - complete_case
+      - mean
+    mcar_impute: false
+    mar_covariates: null
+    mar_slope: 1.5
+  hp_sweep:
+    enabled: false
+    penalty_discounts:
+      - 1.0
+      - 2.0
+    alphas:
+      - 0.01
+      - 0.05
+    target_fprs:
+      - 0.05
+      - 0.10

@@ -9,6 +9,9 @@ tools/__pycache__/
 sim_data_v2
 sim_data/
 sim_data_smoke/
+sim_data_boston10/
+sim_data_boston10_smoke/
 discovery_results/
+fixtures/causal-open-data/
 Figures/
 

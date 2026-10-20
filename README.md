@@ -73,6 +73,14 @@ python tradsim_fastcausal.py --config config_smoke.yaml --cmd plot
 pytest tests/ -q
 ```
 
+10-variable (Boston Set A width) cheap path:
+
+```bash
+python simdata.py --config config_boston10_smoke.yaml --cmd sim
+python tradsim_fastcausal.py --config config_boston10_smoke.yaml --cmd compute
+python tradsim_fastcausal.py --config config_boston10_smoke.yaml --cmd smoke
+```
+
 ## Simulation (`simdata.py`)
 
 `simdata.py` uses `picause.py` (CausalPowerAnalysis fork). Parameters live in
@@ -82,6 +90,73 @@ pytest tests/ -q
 Each case writes a CSV plus a companion `.txt` SEM dump (ground-truth DAG) into
 `simulation.data_directory` (default `./sim_data_v2`). Discovery expects that
 pairing.
+
+Two simulation widths are first-class:
+
+| Config | `num_variables` | `num_edges` | Data dir |
+|--------|-----------------|-------------|----------|
+| `config.yaml` | 22 | 27 | `./sim_data_v2` |
+| `config_boston10.yaml` | 10 | 12 | `./sim_data_boston10` |
+| `config_boston10_smoke.yaml` | 10 | 10 | `./sim_data_boston10_smoke` |
+
+12 edges at `p=10` keeps average degree ≈ 2.4, matching the 22-var / 27-edge
+grid. Use the 10-var profile when the goal is to match real Boston EMA
+fixture width (Aims 3–4). `config.yaml` is unchanged.
+
+## Real Boston EMA (Aims 3–4)
+
+Individual and multi-subject EMA-CDA needs **long within-person series**.
+Boston Full-survey **classic-7** mood sums (`PANAS_PA` / `PANAS_NA` /
+`worry_scale` / `PHQ9`) exist only on the Full instrument, so complete-case
+length maxes out at **~61 days/person** (almost no N≥60 cohorts, none at
+N≥100).
+
+**Set A** is the 10 columns asked on **both** short and full daily surveys:
+
+`TIB`, `TST`, `sleepdiary_sleeplatency`, `sleepdiary_wakes`,
+`night_awakening_time`, `sleepdiary_naptime`, `socialize_min`,
+`people_contact`, `alcohol_bev`, `stress`
+
+Short+full Set A complete days: **325** subjects with ≥60 days, **128** with
+≥100. Matching simulations therefore use **`num_variables: 10`** (not 22) so
+simulated `p` equals real EMA `p`. Longer rationale:
+[`docs/aims3-4-boston-ema.md`](docs/aims3-4-boston-ema.md).
+
+Public fixtures live in [causal-open-data](https://github.com/kelvinlim/causal-open-data)
+(**CC-BY 4.0**; citation in [`NOTICE`](NOTICE)). This repo **pins a commit SHA**
+and does not vendor copies:
+
+```bash
+python3 scripts/fetch_boston_fixtures.py
+# pin: scripts/boston_fixtures_pin.json
+# dest: fixtures/causal-open-data/datasets/boston/  (gitignored)
+```
+
+| After fetch | n × p |
+|-------------|-------|
+| `.../boston_sub132_allsurveys_10v.csv` | 142 × 10 |
+| `.../boston_sub79_allsurveys_10v.csv` | 142 × 10 |
+| `.../individual/boston_sub*_n*_10v.csv` | 11–129 × 10 (**n-scaling ladder**) |
+
+The n-scaling ladder in causal-open-data is six subjects at increasing Set A
+lengths (n = 11, 27, 35, 41, 87, 129). Use it for real-data **length
+scaling**; keep subject 132 as the original long fixture.
+
+### 10-var sim, then discovery (no Java)
+
+```bash
+python simdata.py --config config_boston10.yaml --cmd sim
+python tradsim_fastcausal.py --config config_boston10.yaml --cmd compute
+python tradsim_fastcausal.py --config config_boston10.yaml --cmd plot
+```
+
+Cheap 10-var dry-run: `config_boston10_smoke.yaml` (see above). Discovery is
+the existing `tradsim_fastcausal` path on sim CSVs + picause `.txt` DAGs.
+
+A later real-data runner would load the fetched Boston CSVs
+(`tools/boston_realdata.py`). `tradsim_fastcausal.py` skips CSVs without a
+companion picause `.txt`, so those fixtures are not scored against simulated
+ground truth. No HCP data.
 
 ## Discovery (`tradsim_fastcausal.py`)
 
@@ -343,6 +418,9 @@ commented out.
   `tradsim_fges_obj.py --cmd impute` hook remains real-data only.
 - **SA4 leftovers** — clinical / real-data target-FPR calibration (this
   tree only selects HPs against **simulated** picause truth).
+- **Real Boston discovery loop** — fixtures can be fetched (Aims 3–4); a
+  runner that searches the CSVs without picause truth is not in this tree
+  yet (`tools/boston_realdata.py` is a loader stub).
 
 ## Historical notes
 

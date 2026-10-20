@@ -4,6 +4,7 @@ general:
   version: 1.0.0
 
 
+# 22-variable thesis grid. Boston Set A width: config_boston10.yaml (p=10).
 simulation:
   num_samples: 
     - 10000

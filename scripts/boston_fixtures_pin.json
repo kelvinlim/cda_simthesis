@@ -1,0 +1,79 @@
+{
+  "repo": "kelvinlim/causal-open-data",
+  "commit": "8d7c7553d7f54e1cb6497fcbbc6fa2d77f7d29d4",
+  "license": "CC-BY 4.0",
+  "source_url": "https://github.com/kelvinlim/causal-open-data",
+  "note": "Pin a commit SHA, not main. Boston College COVID-19 Sleep and Well-Being Set A (10-variable) derivatives only. No HCP or other restricted participant data.",
+  "set_a_variables": [
+    "TIB",
+    "TST",
+    "sleepdiary_sleeplatency",
+    "sleepdiary_wakes",
+    "night_awakening_time",
+    "sleepdiary_naptime",
+    "socialize_min",
+    "people_contact",
+    "alcohol_bev",
+    "stress"
+  ],
+  "files": [
+    {
+      "path": "datasets/boston/CITATION.txt",
+      "sha256": "699ef8d4f8ead1ca8e1ce0b10b8e0b9fb2abe5256d9ade2b9339d427d25210ee",
+      "role": "citation"
+    },
+    {
+      "path": "datasets/boston/README.md",
+      "sha256": "2014c19729b44198149cc30338d4aa51d011fa7199038abe8bf2d8e325bceaef",
+      "role": "docs"
+    },
+    {
+      "path": "datasets/boston/boston_sub132_allsurveys_10v.csv",
+      "sha256": "a2629eaacc614e4c5a9ab3db78b72107618d64980d0ca2554dac1f44c6742a42",
+      "role": "primary_set_a",
+      "n_x_p": "142 x 10"
+    },
+    {
+      "path": "datasets/boston/boston_sub79_allsurveys_10v.csv",
+      "sha256": "07784c315785373ba85dc63f911189b78261ad470bace45ede6aeb7df1bc2945",
+      "role": "alternate_set_a",
+      "n_x_p": "142 x 10"
+    },
+    {
+      "path": "datasets/boston/individual/boston_sub464_n11_10v.csv",
+      "sha256": "180e1a27704bc3e6eefafa89cf00e74c41cbc16dad388e03a00f3dbb128f2916",
+      "role": "n_scaling",
+      "n_x_p": "11 x 10"
+    },
+    {
+      "path": "datasets/boston/individual/boston_sub250_n27_10v.csv",
+      "sha256": "03375db68e2315adf687c1b146318a6e086d39378c0367bb59f9d79552088ad2",
+      "role": "n_scaling",
+      "n_x_p": "27 x 10"
+    },
+    {
+      "path": "datasets/boston/individual/boston_sub304_n35_10v.csv",
+      "sha256": "f1cd6a89bd4178c8918386c3657279df8bc5831d223062b0d71295b4d406ccaa",
+      "role": "n_scaling",
+      "n_x_p": "35 x 10"
+    },
+    {
+      "path": "datasets/boston/individual/boston_sub1534_n41_10v.csv",
+      "sha256": "b61c5148c8fadbb01894a44b6dcbad42fe20ca1c232ee6ca4111082a4253a712",
+      "role": "n_scaling",
+      "n_x_p": "41 x 10"
+    },
+    {
+      "path": "datasets/boston/individual/boston_sub323_n87_10v.csv",
+      "sha256": "1977ba04d5e16d1280931421c5cf01b3217f061e9cf96150c4baf5a59218fb48",
+      "role": "n_scaling",
+      "n_x_p": "87 x 10"
+    },
+    {
+      "path": "datasets/boston/individual/boston_sub305_n129_10v.csv",
+      "sha256": "b5316520d6a052cdc704bd52e19b2b2464458d9db00bdcd660f985eaa7488797",
+      "role": "n_scaling",
+      "n_x_p": "129 x 10"
+    }
+  ]
+}
